@@ -120,7 +120,7 @@ unsafe fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, l
         byte_count: len as i64,
     };
 
-    extern "system" {
+    unsafe extern "system" {
         fn DeviceIoControl(
             hdevice: *mut std::ffi::c_void,
             dwiocontrolcode: u32,
@@ -134,16 +134,18 @@ unsafe fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, l
     }
 
     let mut bytes_returned = 0u32;
-    let success = DeviceIoControl(
-        dest_file.as_raw_handle() as *mut std::ffi::c_void,
-        0x00098344, // FSCTL_DUPLICATE_EXTENTS_TO_FILE
-        &data as *const _ as *const std::ffi::c_void,
-        std::mem::size_of::<DUPLICATE_EXTENTS_DATA>() as u32,
-        std::ptr::null_mut(),
-        0,
-        &mut bytes_returned,
-        std::ptr::null_mut(),
-    );
+    let success = unsafe {
+        DeviceIoControl(
+            dest_file.as_raw_handle() as *mut std::ffi::c_void,
+            0x00098344, // FSCTL_DUPLICATE_EXTENTS_TO_FILE
+            &data as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<DUPLICATE_EXTENTS_DATA>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+        )
+    };
 
     success != 0
 }
@@ -263,7 +265,7 @@ where
                             .encode_utf16()
                             .chain(std::iter::once(0))
                             .collect();
-                        extern "system" {
+                        unsafe extern "system" {
                             fn SetFileAttributesW(
                                 lpfilename: *const u16,
                                 dwfileattributes: u32,
@@ -464,7 +466,7 @@ where
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
-            extern "system" {
+            unsafe extern "system" {
                 fn SetFileAttributesW(lpfilename: *const u16, dwfileattributes: u32) -> i32;
             }
             unsafe {

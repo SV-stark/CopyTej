@@ -1,7 +1,7 @@
 use windows::core::HRESULT;
 use windows::Win32::Foundation::HINSTANCE;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn DllMain(
     _hmodule: HINSTANCE,
@@ -11,7 +11,7 @@ pub extern "system" fn DllMain(
     true
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn DllGetClassObject(
     _rclsid: *const windows::core::GUID,
@@ -21,7 +21,7 @@ pub extern "system" fn DllGetClassObject(
     HRESULT(-2147467262) // E_NOINTERFACE
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     HRESULT(1) // S_FALSE
