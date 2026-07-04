@@ -10,6 +10,9 @@ jobs:
     name: Build Setup (Windows)
     runs-on: windows-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -31,10 +34,16 @@ jobs:
       - name: Install Node Dependencies
         run: npm ci
 
-      - name: Build Tauri Installer
+      - name: Build and Publish Nightly Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: nightly
+          releaseName: 'Nightly Build'
+          releaseBody: 'Automatic pre-release bundle updated on every successful commit push.'
+          releaseDraft: false
+          prerelease: true
 
       - name: Upload Windows Setup Artifacts
         uses: actions/upload-artifact@v4
