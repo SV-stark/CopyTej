@@ -118,10 +118,52 @@ function App() {
   const [enableBlockCloning, setEnableBlockCloning] = useState(true);
   const [speedLimitKbps, setSpeedLimitKbps] = useState(0);
   const [explorerContextMenu, setExplorerContextMenu] = useState(false);
+  const [enableSounds, setEnableSounds] = useState(true);
 
   // Keep a ref for the selectedJob to use inside event listeners (to prevent stale closures)
   const selectedJobRef = useRef<TransferJob | null>(null);
   selectedJobRef.current = selectedJob;
+
+  const enableSoundsRef = useRef(enableSounds);
+  enableSoundsRef.current = enableSounds;
+
+  const playChime = (type: 'success' | 'error') => {
+    if (!enableSoundsRef.current) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (type === 'success') {
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, index) => {
+          const osc = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, audioCtx.currentTime + index * 0.1);
+          gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime + index * 0.1);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + index * 0.1 + 0.4);
+          osc.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          osc.start(audioCtx.currentTime + index * 0.1);
+          osc.stop(audioCtx.currentTime + index * 0.1 + 0.4);
+        });
+      } else {
+        const notes = [622.25, 523.25];
+        notes.forEach((freq, index) => {
+          const osc = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, audioCtx.currentTime + index * 0.15);
+          gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime + index * 0.15);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + index * 0.15 + 0.5);
+          osc.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+          osc.start(audioCtx.currentTime + index * 0.15);
+          osc.stop(audioCtx.currentTime + index * 0.15 + 0.5);
+        });
+      }
+    } catch (e) {
+      console.error("Web Audio API not supported:", e);
+    }
+  };
 
   // Refresh active jobs helper
   const refreshActiveJobs = async () => {
@@ -184,6 +226,18 @@ function App() {
       }
     }
   };
+
+  const handleExportJobReport = async (jobId: string, format: 'csv' | 'json', e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const res = await invoke<string>("export_job_report", { jobId, format });
+      alert(res);
+    } catch (e) {
+      if (e !== "Cancelled") {
+        alert("Failed to export report: " + e);
+      }
+    }
+  };
   // Load Settings
   const loadSettings = async () => {
     try {
@@ -201,6 +255,9 @@ function App() {
 
       const explorerMenuVal = await invoke<string | null>("get_setting", { key: "explorer_context_menu" });
       setExplorerContextMenu(explorerMenuVal === "true");
+
+      const soundsVal = await invoke<string | null>("get_setting", { key: "enable_sounds" });
+      setEnableSounds(soundsVal !== "false");
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -248,9 +305,16 @@ function App() {
     });
 
     // Listen for job status changes
-    const unlistenStatusChanged = listen<[string, string]>("transfer://status-changed", () => {
+    const unlistenStatusChanged = listen<[string, any]>("transfer://status-changed", (event) => {
+      const [_, status] = event.payload;
       refreshActiveJobs();
       refreshHistory();
+      
+      if (status === "Done") {
+        playChime("success");
+      } else if (status === "Error" || (typeof status === "object" && status !== null && "Error" in status)) {
+        playChime("error");
+      }
     });
 
     // Listen for name conflicts
@@ -955,7 +1019,23 @@ function App() {
                             <td style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
                               {job.started_at ? new Date(job.started_at * 1000).toLocaleString() : "Unknown"}
                             </td>
-                            <td style={{ textAlign: "center" }}>
+                            <td style={{ textAlign: "center", display: "flex", gap: "8px", justifyContent: "center" }}>
+                              <button
+                                className="btn btn-sm btn-icon"
+                                style={{ background: "transparent", border: "none", color: "var(--accent-blue)", fontSize: "1.1rem", padding: "2px", cursor: "pointer" }}
+                                onClick={(e) => handleExportJobReport(job.id, "csv", e)}
+                                title="Export CSV Report"
+                              >
+                                📊
+                              </button>
+                              <button
+                                className="btn btn-sm btn-icon"
+                                style={{ background: "transparent", border: "none", color: "var(--accent-purple)", fontSize: "1.1rem", padding: "2px", cursor: "pointer" }}
+                                onClick={(e) => handleExportJobReport(job.id, "json", e)}
+                                title="Export JSON Report"
+                              >
+                                📄
+                              </button>
                               <button
                                 className="btn btn-sm btn-icon"
                                 style={{ background: "transparent", border: "none", color: "var(--status-error)", fontSize: "1.1rem", padding: "2px", cursor: "pointer" }}
@@ -1087,6 +1167,23 @@ function App() {
                       type="checkbox"
                       checked={explorerContextMenu}
                       onChange={(e) => toggleExplorerContextMenu(e.target.checked)}
+                    />
+                  </label>
+                </div>
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <span className="setting-title">Enable Sound Effects</span>
+                    <span className="setting-desc">Plays a success chime on completion and a warning sound on failures or skipped files.</span>
+                  </div>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={enableSounds}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        setEnableSounds(val);
+                        saveSetting("enable_sounds", String(val));
+                      }}
                     />
                   </label>
                 </div>

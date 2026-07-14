@@ -305,3 +305,67 @@ pub async fn unregister_explorer_context_menu() -> Result<(), String> {
         Err("Registry operations are only supported on Windows".to_string())
     }
 }
+
+#[tauri::command]
+pub async fn export_job_report(
+    app: tauri::AppHandle,
+    db: State<'_, Arc<DbManager>>,
+    job_id: String,
+    format: String,
+) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let uuid = Uuid::parse_str(&job_id).map_err(|e| e.to_string())?;
+    let job_opt = db.get_job(uuid).map_err(|e| e.to_string())?;
+
+    let job = match job_opt {
+        Some(j) => j,
+        None => return Err("Job not found".to_string()),
+    };
+
+    let contents = if format.to_lowercase() == "csv" {
+        let mut csv = String::new();
+        csv.push_str("Source,Destination,Size(Bytes),Status,Source Hash,Destination Hash,Error\n");
+        for file in job.files {
+            let status_str = match file.status {
+                crate::engine::FileStatus::Queued => "Queued".to_string(),
+                crate::engine::FileStatus::Copying => "Copying".to_string(),
+                crate::engine::FileStatus::Verifying => "Verifying".to_string(),
+                crate::engine::FileStatus::Done => "Done".to_string(),
+                crate::engine::FileStatus::Skipped => "Skipped".to_string(),
+                crate::engine::FileStatus::Error(e) => format!("Error: {}", e),
+            };
+            csv.push_str(&format!(
+                "\"{}\",\"{}\",{},\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                file.src.replace("\"", "\"\""),
+                file.dest.replace("\"", "\"\""),
+                file.bytes_total,
+                status_str,
+                file.hash_src.unwrap_or_default(),
+                file.hash_dest.unwrap_or_default(),
+                file.error.unwrap_or_default().replace("\"", "\"\"")
+            ));
+        }
+        csv
+    } else {
+        serde_json::to_string_pretty(&job).map_err(|e| e.to_string())?
+    };
+
+    let ext = if format.to_lowercase() == "csv" {
+        "csv"
+    } else {
+        "json"
+    };
+    let file_path_opt = app
+        .dialog()
+        .file()
+        .set_file_name(&format!("copytej_report_{}.{}", job_id, ext))
+        .blocking_save_file();
+
+    if let Some(file_path) = file_path_opt {
+        let path_str = file_path_to_string(file_path);
+        std::fs::write(&path_str, contents).map_err(|e| e.to_string())?;
+        Ok(format!("Report saved to: {}", path_str))
+    } else {
+        Err("Cancelled".to_string())
+    }
+}

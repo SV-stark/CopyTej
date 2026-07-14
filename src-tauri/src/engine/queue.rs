@@ -6,7 +6,7 @@ use crate::engine::{
 use crate::store::db::DbManager;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
@@ -161,6 +161,44 @@ impl QueueManager {
             let src_path = Path::new(src_str);
             if !src_path.exists() {
                 return Err(format!("Source path does not exist: {}", src_str));
+            }
+
+            let filename = src_path.file_name().unwrap().to_string_lossy().to_string();
+            let dest_path = Path::new(&dest_dir).join(&filename);
+
+            let mut renamed = false;
+            if is_move {
+                let p1_abs =
+                    std::fs::canonicalize(src_path).unwrap_or_else(|_| src_path.to_path_buf());
+                let dest_path_parent = Path::new(&dest_dir);
+                let p2_abs = std::fs::canonicalize(dest_path_parent)
+                    .unwrap_or_else(|_| dest_path_parent.to_path_buf());
+                let p1_root = p1_abs.components().next();
+                let p2_root = p2_abs.components().next();
+                let same_volume = p1_root.is_some() && p1_root == p2_root;
+
+                if same_volume {
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if std::fs::rename(src_path, &dest_path).is_ok() {
+                        renamed = true;
+                        files.push(TransferFile {
+                            src: src_str.clone(),
+                            dest: dest_path.to_string_lossy().to_string(),
+                            bytes_total: 0,
+                            bytes_done: 0,
+                            status: FileStatus::Done,
+                            hash_src: None,
+                            hash_dest: None,
+                            error: None,
+                        });
+                    }
+                }
+            }
+
+            if renamed {
+                continue;
             }
 
             if src_path.is_file() {
@@ -572,9 +610,6 @@ impl QueueManager {
             );
 
             let job_id = job.id;
-            let file_src = file.src.clone();
-            let app_emitter = app_handle.clone();
-            let db_ref = Arc::clone(&self.db);
 
             struct ProgressState {
                 overall_bytes_done: u64,
@@ -591,70 +626,130 @@ impl QueueManager {
                 last_emit: Instant::now(),
                 speed_bps: job.speed_bps,
             }));
-            let progress_state_cb = Arc::clone(&progress_state);
 
             let last_file_bytes_done = Arc::new(Mutex::new(file.bytes_done));
-            let last_file_bytes_done_cb = Arc::clone(&last_file_bytes_done);
 
-            let copy_res = copy_file_chunked(
-                src_path,
-                &dest_path,
-                file.bytes_done,
-                Some(file.bytes_total),
-                self.engine.get_or_create_pause_flag(job.id),
-                self.engine.get_or_create_cancel_flag(job.id),
-                Arc::clone(&self.engine.rate_limiter),
-                if auto_verify { Some(hash_algo) } else { None },
-                enable_block_cloning,
-                move |chunk_size| {
-                    let mut file_bytes = last_file_bytes_done_cb.lock().unwrap();
-                    *file_bytes += chunk_size;
-                    let _ = db_ref.update_file_progress(
-                        job_id,
-                        &file_src,
-                        *file_bytes,
-                        FileStatus::Copying,
-                    );
+            let mut copy_res = Err("Initial".to_string());
+            let mut retries = 0;
+            const MAX_RETRIES: usize = 3;
 
-                    let _ = app_emitter.emit(
-                        "transfer://file-progress",
-                        (job_id.to_string(), file_src.clone(), *file_bytes),
-                    );
+            while retries <= MAX_RETRIES {
+                if self
+                    .engine
+                    .get_or_create_cancel_flag(job.id)
+                    .load(Ordering::SeqCst)
+                {
+                    copy_res = Err("Operation cancelled".to_string());
+                    break;
+                }
 
-                    let mut state = progress_state_cb.lock().unwrap();
-                    state.overall_bytes_done += chunk_size;
-
-                    let now = Instant::now();
-                    let elapsed_speed = state.last_speed_calc.elapsed().as_secs_f64();
-                    if elapsed_speed > 0.5 {
-                        let copied_diff = state
-                            .overall_bytes_done
-                            .saturating_sub(state.last_bytes_done);
-                        state.speed_bps = (copied_diff as f64 / elapsed_speed) as u64;
-                        state.last_bytes_done = state.overall_bytes_done;
-                        state.last_speed_calc = now;
-
-                        let _ = db_ref.update_job_progress(
-                            job_id,
-                            state.overall_bytes_done,
-                            state.speed_bps,
-                        );
+                while self
+                    .engine
+                    .get_or_create_pause_flag(job.id)
+                    .load(Ordering::SeqCst)
+                {
+                    if self
+                        .engine
+                        .get_or_create_cancel_flag(job.id)
+                        .load(Ordering::SeqCst)
+                    {
+                        break;
                     }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
 
-                    if now.duration_since(state.last_emit) > Duration::from_millis(200) {
-                        let _ = app_emitter.emit(
-                            "transfer://job-progress",
-                            (
-                                job_id.to_string(),
-                                state.overall_bytes_done,
-                                state.speed_bps,
-                            ),
-                        );
-                        state.last_emit = now;
+                let last_done_val = *last_file_bytes_done.lock().unwrap();
+
+                copy_res = copy_file_chunked(
+                    src_path,
+                    &dest_path,
+                    last_done_val,
+                    Some(file.bytes_total),
+                    self.engine.get_or_create_pause_flag(job.id),
+                    self.engine.get_or_create_cancel_flag(job.id),
+                    Arc::clone(&self.engine.rate_limiter),
+                    if auto_verify { Some(hash_algo) } else { None },
+                    enable_block_cloning,
+                    {
+                        let last_file_bytes_done_cb = Arc::clone(&last_file_bytes_done);
+                        let progress_state_cb = Arc::clone(&progress_state);
+                        let db_ref = Arc::clone(&self.db);
+                        let app_emitter = app_handle.clone();
+                        let file_src = file.src.clone();
+                        move |chunk_size| {
+                            let mut file_bytes = last_file_bytes_done_cb.lock().unwrap();
+                            *file_bytes += chunk_size;
+                            let _ = db_ref.update_file_progress(
+                                job_id,
+                                &file_src,
+                                *file_bytes,
+                                FileStatus::Copying,
+                            );
+
+                            let _ = app_emitter.emit(
+                                "transfer://file-progress",
+                                (job_id.to_string(), file_src.clone(), *file_bytes),
+                            );
+
+                            let mut state = progress_state_cb.lock().unwrap();
+                            state.overall_bytes_done += chunk_size;
+
+                            let now = Instant::now();
+                            let elapsed_speed = state.last_speed_calc.elapsed().as_secs_f64();
+                            if elapsed_speed > 0.5 {
+                                let copied_diff = state
+                                    .overall_bytes_done
+                                    .saturating_sub(state.last_bytes_done);
+                                let inst_speed = (copied_diff as f64 / elapsed_speed) as u64;
+                                if state.speed_bps == 0 {
+                                    state.speed_bps = inst_speed;
+                                } else {
+                                    let alpha = 0.3;
+                                    state.speed_bps = ((alpha * inst_speed as f64)
+                                        + ((1.0 - alpha) * state.speed_bps as f64))
+                                        as u64;
+                                }
+                                state.last_bytes_done = state.overall_bytes_done;
+                                state.last_speed_calc = now;
+
+                                let _ = db_ref.update_job_progress(
+                                    job_id,
+                                    state.overall_bytes_done,
+                                    state.speed_bps,
+                                );
+                            }
+
+                            if now.duration_since(state.last_emit) > Duration::from_millis(200) {
+                                let _ = app_emitter.emit(
+                                    "transfer://job-progress",
+                                    (
+                                        job_id.to_string(),
+                                        state.overall_bytes_done,
+                                        state.speed_bps,
+                                    ),
+                                );
+                                state.last_emit = now;
+                            }
+                        }
+                    },
+                )
+                .await;
+
+                if copy_res.is_ok() {
+                    break;
+                }
+
+                if let Err(ref err_msg) = copy_res {
+                    if err_msg.contains("cancelled") || err_msg.contains("size changed") {
+                        break;
                     }
-                },
-            )
-            .await;
+                }
+
+                retries += 1;
+                if retries <= MAX_RETRIES {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
 
             match copy_res {
                 Ok((bytes_written, src_hash_opt)) => {

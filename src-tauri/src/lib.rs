@@ -174,7 +174,8 @@ pub fn run() {
             commands::delete_job,
             commands::clear_history,
             commands::register_explorer_context_menu,
-            commands::unregister_explorer_context_menu
+            commands::unregister_explorer_context_menu,
+            commands::export_job_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
