@@ -117,6 +117,7 @@ function App() {
   const [hashAlgorithm, setHashAlgorithm] = useState("Blake3");
   const [enableBlockCloning, setEnableBlockCloning] = useState(true);
   const [speedLimitKbps, setSpeedLimitKbps] = useState(0);
+  const [explorerContextMenu, setExplorerContextMenu] = useState(false);
 
   // Keep a ref for the selectedJob to use inside event listeners (to prevent stale closures)
   const selectedJobRef = useRef<TransferJob | null>(null);
@@ -197,6 +198,9 @@ function App() {
 
       const limitVal = await invoke<string | null>("get_setting", { key: "speed_limit_kbps" });
       setSpeedLimitKbps(Number(limitVal) || 0);
+
+      const explorerMenuVal = await invoke<string | null>("get_setting", { key: "explorer_context_menu" });
+      setExplorerContextMenu(explorerMenuVal === "true");
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -208,6 +212,21 @@ function App() {
       await invoke("set_setting", { key, value });
     } catch (e) {
       console.error("Failed to save setting:", e);
+    }
+  };
+
+  const toggleExplorerContextMenu = async (enabled: boolean) => {
+    try {
+      if (enabled) {
+        await invoke("register_explorer_context_menu");
+      } else {
+        await invoke("unregister_explorer_context_menu");
+      }
+      setExplorerContextMenu(enabled);
+      saveSetting("explorer_context_menu", String(enabled));
+    } catch (e) {
+      console.error("Failed to toggle Explorer integration:", e);
+      alert(`Error toggling Explorer integration: ${e}`);
     }
   };
 
@@ -357,6 +376,19 @@ function App() {
       }
     });
 
+    // Listen for drag-drop events
+    const unlistenDragDrop = listen<{ paths: string[] }>("tauri://drag-drop", (event) => {
+      const paths = event.payload?.paths || [];
+      if (paths.length > 0) {
+        setSrcPaths(prev => {
+          const unique = new Set([...prev, ...paths]);
+          return Array.from(unique);
+        });
+        setNewJobModal(true);
+        setActiveTab("dashboard");
+      }
+    });
+
     // Fallback polling for updates (in case socket drops or background named pipe jobs are added)
     const interval = setInterval(() => {
       refreshActiveJobs();
@@ -371,6 +403,7 @@ function App() {
       unlistenFileProgress.then(f => f());
       unlistenFileStatus.then(f => f());
       unlistenJobProgress.then(f => f());
+      unlistenDragDrop.then(f => f());
     };
   }, []);
 
@@ -1046,10 +1079,16 @@ function App() {
                 <h3 className="settings-section-title">System Integration</h3>
                 <div className="setting-row">
                   <div className="setting-info">
-                    <span className="setting-title">Windows Explorer Handler</span>
-                    <span className="setting-desc">Configure registry bindings to replace default Windows Copy.</span>
+                    <span className="setting-title">Windows Explorer Context Menu</span>
+                    <span className="setting-desc">Integrates "Copy with CopyTej" into your right-click context menu (no admin rights required).</span>
                   </div>
-                  <span className="badge badge-queued" style={{ textTransform: "none" }}>Needs Admin Registry Access</span>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={explorerContextMenu}
+                      onChange={(e) => toggleExplorerContextMenu(e.target.checked)}
+                    />
+                  </label>
                 </div>
               </div>
             </section>

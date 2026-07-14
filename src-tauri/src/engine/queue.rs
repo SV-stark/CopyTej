@@ -600,9 +600,10 @@ impl QueueManager {
                 src_path,
                 &dest_path,
                 file.bytes_done,
+                Some(file.bytes_total),
                 self.engine.get_or_create_pause_flag(job.id),
                 self.engine.get_or_create_cancel_flag(job.id),
-                Arc::clone(&self.engine.global_speed_limit_kbps),
+                Arc::clone(&self.engine.rate_limiter),
                 if auto_verify { Some(hash_algo) } else { None },
                 enable_block_cloning,
                 move |chunk_size| {

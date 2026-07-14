@@ -60,18 +60,75 @@ pub struct TransferJob {
     pub finished_at: Option<i64>,
 }
 
+pub struct GlobalRateLimiter {
+    pub limit_kbps: Arc<std::sync::atomic::AtomicU64>,
+    state: Mutex<LimiterState>,
+}
+
+struct LimiterState {
+    tokens: f64,
+    last_refill: Instant,
+}
+
+impl GlobalRateLimiter {
+    pub fn new(limit_kbps: Arc<std::sync::atomic::AtomicU64>) -> Self {
+        Self {
+            limit_kbps,
+            state: Mutex::new(LimiterState {
+                tokens: 0.0,
+                last_refill: Instant::now(),
+            }),
+        }
+    }
+
+    pub async fn consume(&self, amount: usize) {
+        let limit = self.limit_kbps.load(Ordering::Relaxed);
+        if limit == 0 {
+            return;
+        }
+
+        let limit_bytes_per_sec = (limit * 1024) as f64;
+        let max_tokens = limit_bytes_per_sec * 0.5;
+
+        loop {
+            let sleep_dur = {
+                let mut state = self.state.lock().unwrap();
+                let now = Instant::now();
+                let elapsed = now.duration_since(state.last_refill).as_secs_f64();
+                state.last_refill = now;
+
+                state.tokens = (state.tokens + elapsed * limit_bytes_per_sec).min(max_tokens);
+
+                if state.tokens >= amount as f64 {
+                    state.tokens -= amount as f64;
+                    return;
+                }
+
+                let needed = amount as f64 - state.tokens;
+                Duration::from_secs_f64(needed / limit_bytes_per_sec)
+            };
+
+            tokio::time::sleep(sleep_dur).await;
+        }
+    }
+}
+
 pub struct TransferEngine {
     pub pause_flags: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
     pub cancel_flags: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
     pub global_speed_limit_kbps: Arc<std::sync::atomic::AtomicU64>,
+    pub rate_limiter: Arc<GlobalRateLimiter>,
 }
 
 impl TransferEngine {
     pub fn new() -> Self {
+        let limit_kbps = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let rate_limiter = Arc::new(GlobalRateLimiter::new(Arc::clone(&limit_kbps)));
         Self {
             pause_flags: Arc::new(Mutex::new(HashMap::new())),
             cancel_flags: Arc::new(Mutex::new(HashMap::new())),
-            global_speed_limit_kbps: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            global_speed_limit_kbps: limit_kbps,
+            rate_limiter,
         }
     }
 
@@ -178,9 +235,10 @@ pub async fn copy_file_chunked<F>(
     src_path: &Path,
     dest_path: &Path,
     start_offset: u64,
+    expected_size: Option<u64>,
     pause_flag: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
-    speed_limit_kbps: Arc<std::sync::atomic::AtomicU64>,
+    rate_limiter: Arc<GlobalRateLimiter>,
     hash_algorithm: Option<hasher::HashAlgorithm>,
     enable_block_cloning: bool,
     progress_callback: F,
@@ -199,6 +257,14 @@ where
     if enable_block_cloning && start_offset == 0 {
         if let Ok(src_meta) = std::fs::metadata(src_path) {
             let file_len = src_meta.len();
+            if let Some(expected) = expected_size {
+                if expected != file_len {
+                    return Err(format!(
+                        "Source file size changed from {} to {} bytes since the transfer was enqueued. Cannot resume.",
+                        expected, file_len
+                    ));
+                }
+            }
             if let (Ok(src_std_file), Ok(dest_std_file)) = (
                 std::fs::File::open(src_path),
                 std::fs::OpenOptions::new()
@@ -289,6 +355,16 @@ where
         .map_err(|e| format!("Failed to read source file metadata: {}", e))?;
     let file_len = file_metadata.len();
 
+    // Verify source file size has not changed since the job was enqueued (especially on resume)
+    if let Some(expected) = expected_size {
+        if expected != file_len {
+            return Err(format!(
+                "Source file size changed from {} to {} bytes since the transfer was enqueued. Cannot resume.",
+                expected, file_len
+            ));
+        }
+    }
+
     let mut dest_file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -348,9 +424,6 @@ where
     } else {
         None
     };
-
-    let mut last_speed_check = Instant::now();
-    let mut bytes_since_last_check = 0u64;
 
     // Tokio Channel Double-Buffering
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4);
@@ -415,27 +488,10 @@ where
         }
 
         bytes_copied += read_bytes as u64;
-        bytes_since_last_check += read_bytes as u64;
         progress_callback(read_bytes as u64);
 
-        // Speed limiting
-        let limit_kbps = speed_limit_kbps.load(Ordering::SeqCst);
-        if limit_kbps > 0 {
-            let limit_bps = limit_kbps * 1024;
-            let elapsed = last_speed_check.elapsed();
-            if elapsed.as_secs_f64() > 0.1 {
-                let actual_speed = bytes_since_last_check as f64 / elapsed.as_secs_f64();
-                if actual_speed > limit_bps as f64 {
-                    let expected_time = bytes_since_last_check as f64 / limit_bps as f64;
-                    let sleep_time = expected_time - elapsed.as_secs_f64();
-                    if sleep_time > 0.0 {
-                        tokio::time::sleep(Duration::from_secs_f64(sleep_time)).await;
-                    }
-                }
-                last_speed_check = Instant::now();
-                bytes_since_last_check = 0;
-            }
-        }
+        // Dynamic Global Rate Limiting
+        rate_limiter.consume(read_bytes).await;
     }
 
     match read_task.await {
@@ -541,14 +597,17 @@ mod tests {
 
         let pause = Arc::new(AtomicBool::new(false));
         let cancel = Arc::new(AtomicBool::new(false));
+        let limit = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let rate_limiter = Arc::new(GlobalRateLimiter::new(limit));
 
         let res = copy_file_chunked(
             &src_path,
             &dest_path,
             0,
+            None,
             pause.clone(),
             cancel.clone(),
-            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            rate_limiter,
             Some(hasher::HashAlgorithm::Blake3),
             true,
             |_| {},

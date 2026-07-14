@@ -190,3 +190,118 @@ pub fn get_cli_args(
     state.src_paths.lock().unwrap().clear();
     Ok((src, is_move))
 }
+
+#[tauri::command]
+pub async fn register_explorer_context_menu() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to get current executable path: {}", e))?;
+        let exe_str = exe_path.to_string_lossy();
+
+        // Register for files (*)
+        let reg_shell_file = r"HKCU\Software\Classes\*\shell\CopyTej";
+        let reg_cmd_file = r"HKCU\Software\Classes\*\shell\CopyTej\command";
+
+        let file_menu_cmd = std::process::Command::new("reg")
+            .args(&[
+                "add",
+                reg_shell_file,
+                "/ve",
+                "/t",
+                "REG_SZ",
+                "/d",
+                "Copy with CopyTej",
+                "/f",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run reg: {}", e))?;
+        if !file_menu_cmd.status.success() {
+            return Err("Failed to add file context menu registry key".to_string());
+        }
+
+        let file_exe_cmd = std::process::Command::new("reg")
+            .args(&[
+                "add",
+                reg_cmd_file,
+                "/ve",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &format!("\"{}\" \"%1\"", exe_str),
+                "/f",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run reg: {}", e))?;
+        if !file_exe_cmd.status.success() {
+            return Err("Failed to add file command registry key".to_string());
+        }
+
+        // Register for directories (Directory)
+        let reg_shell_dir = r"HKCU\Software\Classes\Directory\shell\CopyTej";
+        let reg_cmd_dir = r"HKCU\Software\Classes\Directory\shell\CopyTej\command";
+
+        let dir_menu_cmd = std::process::Command::new("reg")
+            .args(&[
+                "add",
+                reg_shell_dir,
+                "/ve",
+                "/t",
+                "REG_SZ",
+                "/d",
+                "Copy with CopyTej",
+                "/f",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run reg: {}", e))?;
+        if !dir_menu_cmd.status.success() {
+            return Err("Failed to add directory context menu registry key".to_string());
+        }
+
+        let dir_exe_cmd = std::process::Command::new("reg")
+            .args(&[
+                "add",
+                reg_cmd_dir,
+                "/ve",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &format!("\"{}\" \"%1\"", exe_str),
+                "/f",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run reg: {}", e))?;
+        if !dir_exe_cmd.status.success() {
+            return Err("Failed to add directory command registry key".to_string());
+        }
+
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Registry operations are only supported on Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn unregister_explorer_context_menu() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let reg_shell_file = r"HKCU\Software\Classes\*\shell\CopyTej";
+        let reg_shell_dir = r"HKCU\Software\Classes\Directory\shell\CopyTej";
+
+        let _ = std::process::Command::new("reg")
+            .args(&["delete", reg_shell_file, "/f"])
+            .output();
+
+        let _ = std::process::Command::new("reg")
+            .args(&["delete", reg_shell_dir, "/f"])
+            .output();
+
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Registry operations are only supported on Windows".to_string())
+    }
+}

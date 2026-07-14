@@ -1,4 +1,11 @@
-#![allow(clippy::collapsible_if, clippy::manual_flatten, clippy::new_without_default, clippy::too_many_arguments, clippy::manual_unwrap_or_default)]
+#![allow(
+    clippy::collapsible_if,
+    clippy::manual_flatten,
+    clippy::new_without_default,
+    clippy::too_many_arguments,
+    clippy::manual_unwrap_or_default,
+    clippy::needless_borrows_for_generic_args
+)]
 
 pub mod commands;
 pub mod engine;
@@ -102,14 +109,16 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             // Get app data directory for DB storage
-            let app_data_dir = app.path().app_data_dir().map_err(|e| {
-                tauri::Error::Io(std::io::Error::other(e.to_string()))
-            })?;
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| tauri::Error::Io(std::io::Error::other(e.to_string())))?;
             let db_path = app_data_dir.join("copytej.db");
 
-            let db = Arc::new(DbManager::new(db_path).map_err(|e| {
-                tauri::Error::Io(std::io::Error::other(e.to_string()))
-            })?);
+            let db = Arc::new(
+                DbManager::new(db_path)
+                    .map_err(|e| tauri::Error::Io(std::io::Error::other(e.to_string())))?,
+            );
             let _ = db.reset_running_jobs();
             let engine = Arc::new(TransferEngine::new());
             let conflict_manager = Arc::new(ConflictManager::new());
@@ -163,7 +172,9 @@ pub fn run() {
             commands::select_directory,
             commands::select_files,
             commands::delete_job,
-            commands::clear_history
+            commands::clear_history,
+            commands::register_explorer_context_menu,
+            commands::unregister_explorer_context_menu
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

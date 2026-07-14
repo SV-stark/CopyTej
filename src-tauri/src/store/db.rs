@@ -66,6 +66,16 @@ impl DbManager {
             [],
         )?;
 
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transfers_status ON transfers (status)",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transfer_files_job_status ON transfer_files (job_id, status)",
+            [],
+        )?;
+
         Ok(())
     }
 
