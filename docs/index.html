@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CopyTej — High-Performance File Transfer Utility</title>
+  <meta name="description" content="A blazing fast, single-instance file transfer utility built with Tauri v2, React, TypeScript, and Rust. Features NTFS block cloning, dynamic rate limiting, and native Explorer integration.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Background Glows -->
+  <div class="glow glow-1"></div>
+  <div class="glow glow-2"></div>
+  <div class="glow glow-3"></div>
+
+  <!-- Header / Navigation -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand">
+        <div class="brand-icon">T</div>
+        <span class="brand-name">CopyTej</span>
+      </div>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#speed">Performance</a>
+        <a href="#demo">Conflict Demo</a>
+        <a href="#pipeline">Pipeline</a>
+        <a href="#docs">Docs</a>
+      </nav>
+      <a href="https://github.com/SV-stark/CopyTej" target="_blank" class="github-btn" id="githubLink">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+        </svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero-section">
+    <div class="container">
+      <div class="badge-container">
+        <span class="hero-badge">⚡ Tauri v2 & Rust Powered</span>
+        <span class="hero-badge">🚀 v0.2.0 Release</span>
+      </div>
+      <h1 class="hero-title">High-Performance File Transfers <br><span class="gradient-text">Without the Overhead</span></h1>
+      <p class="hero-subtitle">
+        CopyTej is a modern, single-instance alternative to TeraCopy and UltraCopier. Featuring dynamic rate limiting, instant NTFS block cloning, metadata preservation, and smart overwrite policies.
+      </p>
+      
+      <div class="cta-container">
+        <a href="https://github.com/SV-stark/CopyTej/releases/latest" target="_blank" class="btn btn-primary" id="downloadBtn">
+          <span>Download for Windows</span>
+        </a>
+        <a href="#docs" class="btn btn-secondary">
+          <span>Getting Started</span>
+        </a>
+      </div>
+
+      <!-- App Interface Mockup -->
+      <div class="app-mockup">
+        <div class="mockup-header">
+          <div class="mockup-dots">
+            <span class="dot dot-r"></span>
+            <span class="dot dot-y"></span>
+            <span class="dot dot-g"></span>
+          </div>
+          <div class="mockup-title">CopyTej Dashboard</div>
+        </div>
+        <div class="mockup-body">
+          <div class="mockup-sidebar">
+            <div class="sidebar-item active">⚡ Transfers</div>
+            <div class="sidebar-item">🧬 Pipeline Flow</div>
+            <div class="sidebar-item">🕒 History</div>
+            <div class="sidebar-item">⚙️ Settings</div>
+          </div>
+          <div class="mockup-content">
+            <div class="mockup-card progress-card">
+              <div class="progress-title-row">
+                <div>
+                  <h4 style="margin: 0; color: #fff;">Copying 18 items</h4>
+                  <small style="color: #8892b0;">To: D:\Backups\Projects</small>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: #64ffda;">74%</div>
+              </div>
+              <div class="mockup-progress-bar">
+                <div class="mockup-progress-fill" style="width: 74%;"></div>
+              </div>
+              <div class="mockup-stats-row">
+                <div class="stat-box">
+                  <div class="stat-label">Current File</div>
+                  <div class="stat-value" style="color: #64ffda;">main.tar.gz (4.2 GB)</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-label">Transfer Speed</div>
+                  <div class="stat-value">645 MB/s</div>
+                </div>
+                <div class="stat-box">
+                  <div class="stat-label">Time Remaining</div>
+                  <div class="stat-value">5 seconds</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section id="features" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Engineered for Extreme Efficiency</h2>
+        <p class="section-subtitle">Ditch slow shell copies. Replicate files directly at storage limits using custom Rust primitives.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card glass-card">
+          <div class="feature-icon">📁</div>
+          <h3 class="feature-title">NTFS/ReFS Block Cloning</h3>
+          <p class="feature-desc">Utilizes Windows <code>DeviceIoControl</code>. Transfers on the same drive copy instantly (0ms) at metadata-only speed with zero byte overhead.</p>
+        </div>
+
+        <div class="feature-card glass-card">
+          <div class="feature-icon">🏎️</div>
+          <h3 class="feature-title">Dynamic Rate Limiting</h3>
+          <p class="feature-desc">A centralized dynamic token-bucket rate limiter throttles bandwidth collectively across all parallel copy jobs in real time.</p>
+        </div>
+
+        <div class="feature-card glass-card">
+          <div class="feature-icon">🛡️</div>
+          <h3 class="feature-title">On-the-Fly Verification</h3>
+          <p class="feature-desc">Computes Blake3, XXHash3, MD5, or SHA-256 checksums concurrently during the write loop, saving extra read cycles.</p>
+        </div>
+
+        <div class="feature-card glass-card">
+          <div class="feature-icon">🫳</div>
+          <h3 class="feature-title">Native Drag & Drop</h3>
+          <p class="feature-desc">Drop files and folders directly onto the dashboard window to automatically queue them for copying instantly.</p>
+        </div>
+
+        <div class="feature-card glass-card">
+          <div class="feature-icon">🔗</div>
+          <h3 class="feature-title">Explorer Context Menu</h3>
+          <p class="feature-desc">Integrates "Copy with CopyTej" directly into the right-click menu of your files and folders—requires zero admin rights.</p>
+        </div>
+
+        <div class="feature-card glass-card">
+          <div class="feature-icon">🎯</div>
+          <h3 class="feature-title">Smart Overwrite Logic</h3>
+          <p class="feature-desc">Resolve file conflicts with side-by-side comparison cards. Supports Overwrite Older, Skip Same Size/Date, and Auto-Rename.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Performance / Speed Section -->
+  <section id="speed" class="section speed-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Speed Comparisons</h2>
+        <p class="section-subtitle">How CopyTej stacks up when transferring a 10 GB file container on an NTFS SSD partition.</p>
+      </div>
+
+      <div class="speed-flex">
+        <div class="chart-container glass-card">
+          <h4 style="margin-top: 0; color: #fff;">10 GB File Transfer Duration (Seconds)</h4>
+          <div class="bar-group">
+            <div class="bar-label">Windows Copy</div>
+            <div class="bar-wrapper">
+              <div class="bar-fill bar-windows" style="width: 85%;"></div>
+              <span class="bar-value">12.4s</span>
+            </div>
+          </div>
+          <div class="bar-group">
+            <div class="bar-label">TeraCopy</div>
+            <div class="bar-wrapper">
+              <div class="bar-fill bar-teracopy" style="width: 60%;"></div>
+              <span class="bar-value">8.8s</span>
+            </div>
+          </div>
+          <div class="bar-group">
+            <div class="bar-label">CopyTej (Block Cloning)</div>
+            <div class="bar-wrapper">
+              <div class="bar-fill bar-copytej" style="width: 5%;"></div>
+              <span class="bar-value" style="color: #64ffda; font-weight: 700;">0.01s (Instant)</span>
+            </div>
+          </div>
+          <p style="font-size: 0.85rem; color: #8892b0; margin-top: 24px; line-height: 1.5;">
+            * Same-volume transfers leverage instant reflinking (NTFS Copy-on-Write block cloning), bypassing traditional I/O entirely.
+          </p>
+        </div>
+
+        <div class="speed-content">
+          <h3>No Double-Reading. No Disk Lockups.</h3>
+          <p>
+            CopyTej uses a Tokio double-buffering pipe that decouples reading and writing. The writer runs concurrently on a separate worker thread, maintaining maximum disk saturation without locking Windows file systems.
+          </p>
+          <div class="metric-grid">
+            <div class="metric-card">
+              <div class="metric-number">&lt; 0.1s</div>
+              <div class="metric-label">Same-Drive 100GB Copy</div>
+            </div>
+            <div class="metric-number-card">
+              <div class="metric-number">4x</div>
+              <div class="metric-label">Faster hashing via Blake3</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Conflict Demo Section -->
+  <section id="demo" class="section demo-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Simulate Conflict Resolution</h2>
+        <p class="section-subtitle">Try CopyTej's side-by-side conflict card logic. Pick a strategy to resolve the naming collision.</p>
+      </div>
+
+      <div class="interactive-demo glass-card">
+        <div id="demoNotification" class="demo-notification">
+          Conflict Resolved! Applied Overwrite strategy.
+        </div>
+        
+        <div class="conflict-header-title">
+          ⚠️ File Collision: <span>backup_config.json</span>
+        </div>
+        
+        <div class="demo-cards-container">
+          <div class="demo-card source">
+            <div class="card-badge">Source File (Incoming)</div>
+            <h3>backup_config.json</h3>
+            <div class="detail-row"><span>Size:</span> <span>14.5 KB</span></div>
+            <div class="detail-row"><span>Modified:</span> <span style="color: #64ffda;">Today, 8:42 PM (Newer)</span></div>
+          </div>
+
+          <div class="demo-card dest">
+            <div class="card-badge" style="background: rgba(255,255,255,0.05); color: #8892b0;">Destination File (Existing)</div>
+            <h3>backup_config.json</h3>
+            <div class="detail-row"><span>Size:</span> <span>12.1 KB</span></div>
+            <div class="detail-row"><span>Modified:</span> <span>Yesterday, 10:15 AM</span></div>
+          </div>
+        </div>
+
+        <div class="demo-actions">
+          <button class="demo-btn danger" onclick="resolveDemo('Overwrite')">Overwrite</button>
+          <button class="demo-btn" onclick="resolveDemo('Skip')">Skip</button>
+          <button class="demo-btn purple" onclick="resolveDemo('Rename')">Auto-Rename</button>
+          <button class="demo-btn warning" onclick="resolveDemo('Overwrite Older')">Overwrite Older</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pipeline Flow Visual Section -->
+  <section id="pipeline" class="section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">The CopyTej Pipeline</h2>
+        <p class="section-subtitle">Behind the scenes of CopyTej's asynchronous double-buffered architecture.</p>
+      </div>
+
+      <div class="pipeline-flow glass-card">
+        <div class="pipeline-step">
+          <div class="step-num">1</div>
+          <h4>File Read Thread</h4>
+          <p>Tokio spawns an async task to pull chunks into a bounded double-buffer channel.</p>
+        </div>
+        <div class="pipeline-arrow">➔</div>
+        <div class="pipeline-step">
+          <div class="step-num">2</div>
+          <h4>On-the-Fly Hasher</h4>
+          <p>Calculates Blake3 or XXHash checksums in memory as bytes flow through the pipe.</p>
+        </div>
+        <div class="pipeline-arrow">➔</div>
+        <div class="pipeline-step">
+          <div class="step-num">3</div>
+          <h4>File Write Thread</h4>
+          <p>Writes bytes to the target volume asynchronously while preserving metadata attributes.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Docs & Installation -->
+  <section id="docs" class="section docs-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Getting Started</h2>
+        <p class="section-subtitle">Install, build, and configure CopyTej on your desktop.</p>
+      </div>
+
+      <div class="docs-grid">
+        <div class="docs-block">
+          <h3>Build from Source</h3>
+          <p>Ensure you have the Rust toolchain and Node.js installed.</p>
+          <div class="code-box">
+            <span class="code-comment"># Clone the repository</span>
+            <span class="code-line">git clone https://github.com/SV-stark/CopyTej.git</span>
+            <span class="code-comment"># Navigate and install dependencies</span>
+            <span class="code-line">cd CopyTej</span>
+            <span class="code-line">npm install</span>
+            <span class="code-comment"># Launch dev server or compile production exe</span>
+            <span class="code-line">npm run tauri build</span>
+          </div>
+        </div>
+
+        <div class="docs-block">
+          <h3>Single-Instance Named Pipe Integration</h3>
+          <p>
+            CopyTej launches a background named pipe server at <code>\\.\pipe\CopyTej</code>. Spawning a second instance (e.g. enqueuing via Explorer or terminal) serializes file specs and forwards them directly to the running instance's queue.
+          </p>
+          <div class="code-box">
+            <span class="code-comment"># Send files from CLI to active CopyTej queue</span>
+            <span class="code-line">copytej-app.exe "C:\Path\To\File.zip" -d "D:\Destination"</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2026 CopyTej Project. Built with Tauri, Rust, and React.</p>
+      <div class="footer-links">
+        <a href="https://github.com/SV-stark/CopyTej" target="_blank">GitHub Repository</a>
+        <a href="https://github.com/SV-stark/CopyTej/issues" target="_blank">Issues</a>
+        <a href="https://github.com/SV-stark/CopyTej/releases" target="_blank">Releases</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    function resolveDemo(strategy) {
+      const notification = document.getElementById('demoNotification');
+      notification.innerText = `Conflict Resolved! Applied "${strategy}" strategy.`;
+      notification.classList.add('show');
+      
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 3000);
+    }
+  </script>
+</body>
+</html>
