@@ -1,5 +1,5 @@
 use crate::engine::{FileStatus, JobStatus, TransferFile, TransferJob};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{Connection, Result, params};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
@@ -302,6 +302,38 @@ impl DbManager {
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             params![key, value],
         )?;
+        Ok(())
+    }
+
+    pub fn delete_job(&self, id: Uuid) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM transfers WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        conn.execute(
+            "DELETE FROM transfer_files WHERE job_id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_history(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM transfers WHERE status NOT IN ('\"Queued\"', '\"Running\"', '\"Paused\"')",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM transfer_files WHERE job_id NOT IN (SELECT id FROM transfers)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn reset_running_jobs(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE transfers SET status = '\"Paused\"' WHERE status IN ('\"Running\"', '\"Paused\"')", [])?;
         Ok(())
     }
 }

@@ -4,9 +4,10 @@ pub mod queue;
 
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
@@ -27,6 +28,7 @@ pub enum JobStatus {
     Queued,
     Running,
     Paused,
+    Canceled,
     Done,
     Error(String),
 }
@@ -59,33 +61,54 @@ pub struct TransferJob {
 }
 
 pub struct TransferEngine {
-    pub pause_flag: Arc<AtomicBool>,
-    pub cancel_flag: Arc<AtomicBool>,
+    pub pause_flags: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
+    pub cancel_flags: Arc<Mutex<HashMap<Uuid, Arc<AtomicBool>>>>,
+    pub global_speed_limit_kbps: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl TransferEngine {
     pub fn new() -> Self {
         Self {
-            pause_flag: Arc::new(AtomicBool::new(false)),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
+            pause_flags: Arc::new(Mutex::new(HashMap::new())),
+            cancel_flags: Arc::new(Mutex::new(HashMap::new())),
+            global_speed_limit_kbps: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
-    pub fn pause(&self) {
-        self.pause_flag.store(true, Ordering::SeqCst);
+    pub fn get_or_create_pause_flag(&self, job_id: Uuid) -> Arc<AtomicBool> {
+        let mut flags = self.pause_flags.lock().unwrap();
+        flags
+            .entry(job_id)
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
     }
 
-    pub fn resume(&self) {
-        self.pause_flag.store(false, Ordering::SeqCst);
+    pub fn get_or_create_cancel_flag(&self, job_id: Uuid) -> Arc<AtomicBool> {
+        let mut flags = self.cancel_flags.lock().unwrap();
+        flags
+            .entry(job_id)
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone()
     }
 
-    pub fn cancel(&self) {
-        self.cancel_flag.store(true, Ordering::SeqCst);
+    pub fn pause_job(&self, job_id: Uuid) {
+        self.get_or_create_pause_flag(job_id)
+            .store(true, Ordering::SeqCst);
     }
 
-    pub fn reset_flags(&self) {
-        self.pause_flag.store(false, Ordering::SeqCst);
-        self.cancel_flag.store(false, Ordering::SeqCst);
+    pub fn resume_job(&self, job_id: Uuid) {
+        self.get_or_create_pause_flag(job_id)
+            .store(false, Ordering::SeqCst);
+    }
+
+    pub fn cancel_job(&self, job_id: Uuid) {
+        self.get_or_create_cancel_flag(job_id)
+            .store(true, Ordering::SeqCst);
+    }
+
+    pub fn remove_job_flags(&self, job_id: Uuid) {
+        self.pause_flags.lock().unwrap().remove(&job_id);
+        self.cancel_flags.lock().unwrap().remove(&job_id);
     }
 }
 
@@ -114,7 +137,7 @@ unsafe fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, l
     }
 
     let data = DUPLICATE_EXTENTS_DATA {
-        file_handle: src_file.as_raw_handle() as *mut std::ffi::c_void,
+        file_handle: src_file.as_raw_handle(),
         source_file_offset: 0,
         target_file_offset: 0,
         byte_count: len as i64,
@@ -136,7 +159,7 @@ unsafe fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, l
     let mut bytes_returned = 0u32;
     let success = unsafe {
         DeviceIoControl(
-            dest_file.as_raw_handle() as *mut std::ffi::c_void,
+            dest_file.as_raw_handle(),
             0x00098344, // FSCTL_DUPLICATE_EXTENTS_TO_FILE
             &data as *const _ as *const std::ffi::c_void,
             std::mem::size_of::<DUPLICATE_EXTENTS_DATA>() as u32,
@@ -150,13 +173,14 @@ unsafe fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, l
     success != 0
 }
 
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
 pub async fn copy_file_chunked<F>(
     src_path: &Path,
     dest_path: &Path,
     start_offset: u64,
     pause_flag: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
-    speed_limit_bps: Option<u64>,
+    speed_limit_kbps: Arc<std::sync::atomic::AtomicU64>,
     hash_algorithm: Option<hasher::HashAlgorithm>,
     enable_block_cloning: bool,
     progress_callback: F,
@@ -164,6 +188,97 @@ pub async fn copy_file_chunked<F>(
 where
     F: Fn(u64) + Send + Sync + 'static,
 {
+    // Create destination parent directory if it does not exist
+    if let Some(parent) = dest_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create destination directories: {}", e))?;
+    }
+
+    #[cfg(windows)]
+    if enable_block_cloning && start_offset == 0 {
+        if let Ok(src_meta) = std::fs::metadata(src_path) {
+            let file_len = src_meta.len();
+            if let (Ok(src_std_file), Ok(dest_std_file)) = (
+                std::fs::File::open(src_path),
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(dest_path),
+            ) {
+                unsafe {
+                    if try_block_clone(&src_std_file, &dest_std_file, file_len) {
+                        progress_callback(file_len);
+
+                        let src_hash = match hash_algorithm {
+                            Some(hasher::HashAlgorithm::Blake3) => hasher::hash_file_async(
+                                src_path.to_string_lossy().to_string(),
+                                hasher::HashAlgorithm::Blake3,
+                            )
+                            .await
+                            .ok(),
+                            Some(hasher::HashAlgorithm::XxHash3) => hasher::hash_file_async(
+                                src_path.to_string_lossy().to_string(),
+                                hasher::HashAlgorithm::XxHash3,
+                            )
+                            .await
+                            .ok(),
+                            Some(hasher::HashAlgorithm::Md5) => hasher::hash_file_async(
+                                src_path.to_string_lossy().to_string(),
+                                hasher::HashAlgorithm::Md5,
+                            )
+                            .await
+                            .ok(),
+                            Some(hasher::HashAlgorithm::Sha256) => hasher::hash_file_async(
+                                src_path.to_string_lossy().to_string(),
+                                hasher::HashAlgorithm::Sha256,
+                            )
+                            .await
+                            .ok(),
+                            None => None,
+                        };
+
+                        let mut times = std::fs::FileTimes::new();
+                        let mut has_times = false;
+                        if let Ok(modified) = src_meta.modified() {
+                            times = times.set_modified(modified);
+                            has_times = true;
+                        }
+                        if let Ok(accessed) = src_meta.accessed() {
+                            times = times.set_accessed(accessed);
+                            has_times = true;
+                        }
+                        if let Ok(created) = src_meta.created() {
+                            use std::os::windows::fs::FileTimesExt;
+                            times = times.set_created(created);
+                            has_times = true;
+                        }
+                        if has_times {
+                            let _ = dest_std_file.set_times(times);
+                        }
+
+                        let attrs = std::os::windows::fs::MetadataExt::file_attributes(&src_meta);
+                        let wide_path: Vec<u16> = dest_path
+                            .to_string_lossy()
+                            .encode_utf16()
+                            .chain(std::iter::once(0))
+                            .collect();
+                        unsafe extern "system" {
+                            fn SetFileAttributesW(
+                                lpfilename: *const u16,
+                                dwfileattributes: u32,
+                            ) -> i32;
+                        }
+                        SetFileAttributesW(wide_path.as_ptr(), attrs);
+
+                        return Ok((file_len, src_hash));
+                    }
+                }
+            }
+        }
+    }
+
     let mut src_file = File::open(src_path)
         .await
         .map_err(|e| format!("Failed to open source file: {}", e))?;
@@ -173,13 +288,6 @@ where
         .await
         .map_err(|e| format!("Failed to read source file metadata: {}", e))?;
     let file_len = file_metadata.len();
-
-    // Create destination parent directory if it does not exist
-    if let Some(parent) = dest_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| format!("Failed to create destination directories: {}", e))?;
-    }
 
     let mut dest_file = OpenOptions::new()
         .write(true)
@@ -199,85 +307,6 @@ where
             .seek(SeekFrom::Start(start_offset))
             .await
             .map_err(|e| format!("Failed to seek destination: {}", e))?;
-    }
-
-    #[cfg(windows)]
-    if enable_block_cloning && start_offset == 0 {
-        if let (Ok(src_std_file), Ok(dest_std_file)) = (
-            std::fs::File::open(src_path),
-            std::fs::OpenOptions::new().write(true).open(dest_path),
-        ) {
-            unsafe {
-                if try_block_clone(&src_std_file, &dest_std_file, file_len) {
-                    progress_callback(file_len);
-
-                    let src_hash = match hash_algorithm {
-                        Some(hasher::HashAlgorithm::Blake3) => hasher::hash_file_async(
-                            src_path.to_string_lossy().to_string(),
-                            hasher::HashAlgorithm::Blake3,
-                        )
-                        .await
-                        .ok(),
-                        Some(hasher::HashAlgorithm::XxHash3) => hasher::hash_file_async(
-                            src_path.to_string_lossy().to_string(),
-                            hasher::HashAlgorithm::XxHash3,
-                        )
-                        .await
-                        .ok(),
-                        Some(hasher::HashAlgorithm::Md5) => hasher::hash_file_async(
-                            src_path.to_string_lossy().to_string(),
-                            hasher::HashAlgorithm::Md5,
-                        )
-                        .await
-                        .ok(),
-                        Some(hasher::HashAlgorithm::Sha256) => hasher::hash_file_async(
-                            src_path.to_string_lossy().to_string(),
-                            hasher::HashAlgorithm::Sha256,
-                        )
-                        .await
-                        .ok(),
-                        None => None,
-                    };
-
-                    let mut times = std::fs::FileTimes::new();
-                    let mut has_times = false;
-                    if let Ok(modified) = file_metadata.modified() {
-                        times = times.set_modified(modified);
-                        has_times = true;
-                    }
-                    if let Ok(accessed) = file_metadata.accessed() {
-                        times = times.set_accessed(accessed);
-                        has_times = true;
-                    }
-                    if let Ok(created) = file_metadata.created() {
-                        use std::os::windows::fs::FileTimesExt;
-                        times = times.set_created(created);
-                        has_times = true;
-                    }
-                    if has_times {
-                        let _ = dest_std_file.set_times(times);
-                    }
-
-                    if let Ok(meta) = std::fs::metadata(src_path) {
-                        let attrs = std::os::windows::fs::MetadataExt::file_attributes(&meta);
-                        let wide_path: Vec<u16> = dest_path
-                            .to_string_lossy()
-                            .encode_utf16()
-                            .chain(std::iter::once(0))
-                            .collect();
-                        unsafe extern "system" {
-                            fn SetFileAttributesW(
-                                lpfilename: *const u16,
-                                dwfileattributes: u32,
-                            ) -> i32;
-                        }
-                        SetFileAttributesW(wide_path.as_ptr(), attrs);
-                    }
-
-                    return Ok((file_len, src_hash));
-                }
-            }
-        }
     }
 
     let buffer_size = get_adaptive_buffer_size(file_len);
@@ -390,12 +419,14 @@ where
         progress_callback(read_bytes as u64);
 
         // Speed limiting
-        if let Some(limit) = speed_limit_bps {
+        let limit_kbps = speed_limit_kbps.load(Ordering::SeqCst);
+        if limit_kbps > 0 {
+            let limit_bps = limit_kbps * 1024;
             let elapsed = last_speed_check.elapsed();
             if elapsed.as_secs_f64() > 0.1 {
                 let actual_speed = bytes_since_last_check as f64 / elapsed.as_secs_f64();
-                if actual_speed > limit as f64 {
-                    let expected_time = bytes_since_last_check as f64 / limit as f64;
+                if actual_speed > limit_bps as f64 {
+                    let expected_time = bytes_since_last_check as f64 / limit_bps as f64;
                     let sleep_time = expected_time - elapsed.as_secs_f64();
                     if sleep_time > 0.0 {
                         tokio::time::sleep(Duration::from_secs_f64(sleep_time)).await;
@@ -517,7 +548,7 @@ mod tests {
             0,
             pause.clone(),
             cancel.clone(),
-            None,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
             Some(hasher::HashAlgorithm::Blake3),
             true,
             |_| {},

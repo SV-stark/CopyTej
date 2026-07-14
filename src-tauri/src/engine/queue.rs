@@ -1,9 +1,10 @@
 use crate::engine::conflict::{ConflictManager, ConflictResolution};
-use crate::engine::hasher::{hash_file_async, HashAlgorithm};
+use crate::engine::hasher::{HashAlgorithm, hash_file_async};
 use crate::engine::{
-    copy_file_chunked, FileStatus, JobStatus, TransferEngine, TransferFile, TransferJob,
+    FileStatus, JobStatus, TransferEngine, TransferFile, TransferJob, copy_file_chunked,
 };
 use crate::store::db::DbManager;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -16,7 +17,7 @@ pub struct QueueManager {
     engine: Arc<TransferEngine>,
     conflict_manager: Arc<ConflictManager>,
     pub app_handle: AppHandle,
-    active_job_id: Mutex<Option<Uuid>>,
+    pub running_jobs: Mutex<HashSet<Uuid>>,
     notify_run: Arc<Notify>,
 }
 
@@ -32,7 +33,7 @@ impl QueueManager {
             engine,
             conflict_manager,
             app_handle,
-            active_job_id: Mutex::new(None),
+            running_jobs: Mutex::new(HashSet::new()),
             notify_run: Arc::new(Notify::new()),
         }
     }
@@ -47,50 +48,92 @@ impl QueueManager {
                     Err(_) => Vec::new(),
                 };
 
+                let running = manager.running_jobs.lock().unwrap().clone();
                 let next_job = queued_jobs
                     .into_iter()
-                    .find(|j| j.status == JobStatus::Queued);
+                    .find(|j| j.status == JobStatus::Queued && !running.contains(&j.id));
 
                 if let Some(mut job) = next_job {
-                    *manager.active_job_id.lock().unwrap() = Some(job.id);
-                    manager.engine.reset_flags();
+                    manager.running_jobs.lock().unwrap().insert(job.id);
 
-                    let _ = manager
-                        .db
-                        .update_job_status(job.id, JobStatus::Running, None);
-                    let _ = manager
-                        .app_handle
-                        .emit("transfer://status-changed", (job.id.to_string(), "Running"));
+                    // Clean up/init flags for this job
+                    manager
+                        .engine
+                        .get_or_create_pause_flag(job.id)
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                    manager
+                        .engine
+                        .get_or_create_cancel_flag(job.id)
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
 
-                    let job_res = manager.run_job(&mut job).await;
+                    let manager_clone = Arc::clone(&manager);
+                    tauri::async_runtime::spawn(async move {
+                        let _ =
+                            manager_clone
+                                .db
+                                .update_job_status(job.id, JobStatus::Running, None);
+                        let _ = manager_clone
+                            .app_handle
+                            .emit("transfer://status-changed", (job.id.to_string(), "Running"));
 
-                    let final_status = match job_res {
-                        Ok(_) => JobStatus::Done,
-                        Err(e) if e == "Operation cancelled" => {
-                            if manager
-                                .engine
-                                .pause_flag
-                                .load(std::sync::atomic::Ordering::SeqCst)
-                            {
-                                JobStatus::Paused
-                            } else {
-                                JobStatus::Done // Canceled jobs are marked done but with skipped files
+                        let job_res = manager_clone.run_job(&mut job).await;
+
+                        let final_status = match job_res {
+                            Ok(_) => JobStatus::Done,
+                            Err(e) if e == "Operation cancelled" => {
+                                if manager_clone
+                                    .engine
+                                    .get_or_create_pause_flag(job.id)
+                                    .load(std::sync::atomic::Ordering::SeqCst)
+                                {
+                                    JobStatus::Paused
+                                } else {
+                                    JobStatus::Canceled
+                                }
+                            }
+                            Err(e) => JobStatus::Error(e),
+                        };
+
+                        let now = chrono::Utc::now().timestamp();
+                        let _ = manager_clone.db.update_job_status(
+                            job.id,
+                            final_status.clone(),
+                            Some(now),
+                        );
+                        let _ = manager_clone.app_handle.emit(
+                            "transfer://status-changed",
+                            (job.id.to_string(), format!("{:?}", final_status)),
+                        );
+
+                        // Trigger completion notification if the job succeeded
+                        if let JobStatus::Done = final_status {
+                            if let Ok(Some(loaded_job)) = manager_clone.db.get_job(job.id) {
+                                use tauri_plugin_notification::NotificationExt;
+                                let title = "Transfer Completed".to_string();
+                                let body = format!(
+                                    "Successfully copied {} items to {}",
+                                    loaded_job.files.len(),
+                                    loaded_job.dest_dir
+                                );
+                                let _ = manager_clone
+                                    .app_handle
+                                    .notification()
+                                    .builder()
+                                    .title(title)
+                                    .body(body)
+                                    .show();
                             }
                         }
-                        Err(e) => JobStatus::Error(e),
-                    };
 
-                    let now = chrono::Utc::now().timestamp();
-                    let _ = manager
-                        .db
-                        .update_job_status(job.id, final_status.clone(), Some(now));
-                    let _ = manager.app_handle.emit(
-                        "transfer://status-changed",
-                        (job.id.to_string(), format!("{:?}", final_status)),
-                    );
+                        manager_clone.running_jobs.lock().unwrap().remove(&job.id);
+                        manager_clone.engine.remove_job_flags(job.id);
+                        manager_clone
+                            .conflict_manager
+                            .clear_job(&job.id.to_string());
 
-                    *manager.active_job_id.lock().unwrap() = None;
-                    manager.conflict_manager.clear_job(&job.id.to_string());
+                        // Wake up worker to check for more jobs
+                        manager_clone.trigger_worker();
+                    });
                 } else {
                     manager.notify_run.notified().await;
                 }
@@ -242,16 +285,11 @@ impl QueueManager {
             .unwrap_or("0".to_string())
             .parse::<u64>()
             .unwrap_or(0);
-        let speed_limit_bps = if speed_limit_kbps > 0 {
-            Some(speed_limit_kbps * 1024)
-        } else {
-            None
-        };
+        self.engine
+            .global_speed_limit_kbps
+            .store(speed_limit_kbps, std::sync::atomic::Ordering::SeqCst);
 
         let mut overall_bytes_done = job.bytes_done;
-        let mut last_emit = Instant::now();
-        let mut last_bytes_done = overall_bytes_done;
-        let mut last_speed_calc = Instant::now();
 
         // Get fresh files list
         let db_job = self
@@ -270,7 +308,7 @@ impl QueueManager {
             // Check cancellation or pause
             if self
                 .engine
-                .cancel_flag
+                .get_or_create_cancel_flag(job.id)
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
                 return Err("Operation cancelled".to_string());
@@ -538,6 +576,23 @@ impl QueueManager {
             let app_emitter = app_handle.clone();
             let db_ref = Arc::clone(&self.db);
 
+            struct ProgressState {
+                overall_bytes_done: u64,
+                last_bytes_done: u64,
+                last_speed_calc: Instant,
+                last_emit: Instant,
+                speed_bps: u64,
+            }
+
+            let progress_state = Arc::new(Mutex::new(ProgressState {
+                overall_bytes_done,
+                last_bytes_done: overall_bytes_done,
+                last_speed_calc: Instant::now(),
+                last_emit: Instant::now(),
+                speed_bps: job.speed_bps,
+            }));
+            let progress_state_cb = Arc::clone(&progress_state);
+
             let last_file_bytes_done = Arc::new(Mutex::new(file.bytes_done));
             let last_file_bytes_done_cb = Arc::clone(&last_file_bytes_done);
 
@@ -545,9 +600,9 @@ impl QueueManager {
                 src_path,
                 &dest_path,
                 file.bytes_done,
-                Arc::clone(&self.engine.pause_flag),
-                Arc::clone(&self.engine.cancel_flag),
-                speed_limit_bps,
+                self.engine.get_or_create_pause_flag(job.id),
+                self.engine.get_or_create_cancel_flag(job.id),
+                Arc::clone(&self.engine.global_speed_limit_kbps),
                 if auto_verify { Some(hash_algo) } else { None },
                 enable_block_cloning,
                 move |chunk_size| {
@@ -564,6 +619,38 @@ impl QueueManager {
                         "transfer://file-progress",
                         (job_id.to_string(), file_src.clone(), *file_bytes),
                     );
+
+                    let mut state = progress_state_cb.lock().unwrap();
+                    state.overall_bytes_done += chunk_size;
+
+                    let now = Instant::now();
+                    let elapsed_speed = state.last_speed_calc.elapsed().as_secs_f64();
+                    if elapsed_speed > 0.5 {
+                        let copied_diff = state
+                            .overall_bytes_done
+                            .saturating_sub(state.last_bytes_done);
+                        state.speed_bps = (copied_diff as f64 / elapsed_speed) as u64;
+                        state.last_bytes_done = state.overall_bytes_done;
+                        state.last_speed_calc = now;
+
+                        let _ = db_ref.update_job_progress(
+                            job_id,
+                            state.overall_bytes_done,
+                            state.speed_bps,
+                        );
+                    }
+
+                    if now.duration_since(state.last_emit) > Duration::from_millis(200) {
+                        let _ = app_emitter.emit(
+                            "transfer://job-progress",
+                            (
+                                job_id.to_string(),
+                                state.overall_bytes_done,
+                                state.speed_bps,
+                            ),
+                        );
+                        state.last_emit = now;
+                    }
                 },
             )
             .await;
@@ -572,7 +659,15 @@ impl QueueManager {
                 Ok((bytes_written, src_hash_opt)) => {
                     let old_done = file.bytes_done;
                     file.bytes_done = bytes_written;
-                    overall_bytes_done += bytes_written - old_done; // Adjust if resumed
+
+                    {
+                        let mut state = progress_state.lock().unwrap();
+                        let actual_written_diff = bytes_written.saturating_sub(old_done);
+                        let expected_overall = overall_bytes_done + actual_written_diff;
+                        if state.overall_bytes_done < expected_overall {
+                            state.overall_bytes_done = expected_overall;
+                        }
+                    }
 
                     // Verify if requested
                     if auto_verify {
@@ -671,21 +766,11 @@ impl QueueManager {
                 }
             }
 
-            // Periodic progress updates to job level
-            let now = Instant::now();
-            let elapsed_speed = last_speed_calc.elapsed().as_secs_f64();
-
-            let speed_bps = if elapsed_speed > 0.5 {
-                let current_copied = overall_bytes_done;
-                let copied_diff = current_copied.saturating_sub(last_bytes_done);
-                let speed = (copied_diff as f64 / elapsed_speed) as u64;
-
-                last_bytes_done = current_copied;
-                last_speed_calc = now;
-                speed
-            } else {
-                job.speed_bps
+            let (final_overall, speed_bps) = {
+                let state = progress_state.lock().unwrap();
+                (state.overall_bytes_done, state.speed_bps)
             };
+            overall_bytes_done = final_overall;
 
             job.bytes_done = overall_bytes_done;
             job.speed_bps = speed_bps;
@@ -693,13 +778,10 @@ impl QueueManager {
                 .db
                 .update_job_progress(job.id, overall_bytes_done, speed_bps);
 
-            if now.duration_since(last_emit) > Duration::from_millis(150) {
-                let _ = app_handle.emit(
-                    "transfer://job-progress",
-                    (job.id.to_string(), overall_bytes_done, speed_bps),
-                );
-                last_emit = now;
-            }
+            let _ = app_handle.emit(
+                "transfer://job-progress",
+                (job.id.to_string(), overall_bytes_done, speed_bps),
+            );
         }
 
         // Clean up empty directories for move jobs

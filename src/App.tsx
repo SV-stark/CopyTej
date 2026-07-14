@@ -39,6 +39,61 @@ interface ConflictInfo {
   dest_modified: number;
 }
 
+interface ActiveQueueSidebarProps {
+  activeJobs: TransferJob[];
+  selectedJob: TransferJob | null;
+  setSelectedJob: (job: TransferJob) => void;
+  getPercent: (job: TransferJob) => number;
+  formatSpeed: (bps: number) => string;
+  getStatusString: (status: any) => string;
+}
+
+function ActiveQueueSidebar({
+  activeJobs,
+  selectedJob,
+  setSelectedJob,
+  getPercent,
+  formatSpeed,
+  getStatusString,
+}: ActiveQueueSidebarProps) {
+  return (
+    <div className="right-panel">
+      <section className="glass-card" style={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
+        <h3 className="card-title" style={{ marginBottom: "16px" }}>Active Queue</h3>
+        <div className="job-list">
+          {activeJobs.length === 0 ? (
+            <div className="empty-state" style={{ padding: "32px 0" }}>
+              <p style={{ fontSize: "0.9rem" }}>No queued jobs.</p>
+            </div>
+          ) : (
+            activeJobs.map(job => (
+              <div
+                className={`job-card-small ${selectedJob?.id === job.id ? "active" : ""}`}
+                key={job.id}
+                onClick={() => setSelectedJob(job)}
+              >
+                <div className="job-card-header">
+                  <span className="job-card-title">{job.dest_dir.split(/[\\/]/).pop()}</span>
+                  <span className={`badge badge-${(typeof job.status === "object" ? "error" : job.status).toLowerCase()}`}>
+                    {getStatusString(job.status)}
+                  </span>
+                </div>
+                <div className="progress-track" style={{ height: "4px", margin: "8px 0" }}>
+                  <div className="progress-bar-fill" style={{ width: `${getPercent(job)}%` }}></div>
+                </div>
+                <div className="job-card-meta">
+                  <span>{getPercent(job)}%</span>
+                  <span>{formatSpeed(job.speed_bps)}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "topology" | "history" | "settings">("dashboard");
   
@@ -46,6 +101,8 @@ function App() {
   const [activeJobs, setActiveJobs] = useState<TransferJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<TransferJob | null>(null);
   const [historyJobs, setHistoryJobs] = useState<TransferJob[]>([]);
+  const [historyPage, setHistoryPage] = useState(0);
+  const historyPerPage = 10;
   const [conflict, setConflict] = useState<ConflictInfo | null>(null);
   
   // Modal / Input States
@@ -92,15 +149,40 @@ function App() {
   };
 
   // Refresh history
-  const refreshHistory = async () => {
+  const refreshHistory = async (page = historyPage) => {
     try {
-      const history = await invoke<TransferJob[]>("get_history", { limit: 50, offset: 0 });
+      const history = await invoke<TransferJob[]>("get_history", {
+        limit: historyPerPage,
+        offset: page * historyPerPage,
+      });
       setHistoryJobs(history);
     } catch (e) {
       console.error("Failed to fetch history:", e);
     }
   };
+  const handleClearHistory = async () => {
+    if (confirm("Are you sure you want to clear completed transfer history?")) {
+      try {
+        await invoke("clear_history");
+        refreshHistory(0);
+        setHistoryPage(0);
+      } catch (e) {
+        console.error("Failed to clear history:", e);
+      }
+    }
+  };
 
+  const handleDeleteHistoryJob = async (jobId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm("Are you sure you want to delete this job history?")) {
+      try {
+        await invoke("delete_job", { jobId });
+        refreshHistory(historyPage);
+      } catch (e) {
+        console.error("Failed to delete job history:", e);
+      }
+    }
+  };
   // Load Settings
   const loadSettings = async () => {
     try {
@@ -129,10 +211,16 @@ function App() {
     }
   };
 
+  useEffect(() => {
+    if (activeTab === "history") {
+      refreshHistory(historyPage);
+    }
+  }, [historyPage, activeTab]);
+
   // Initialize event listeners
   useEffect(() => {
     refreshActiveJobs();
-    refreshHistory();
+    refreshHistory(historyPage);
     loadSettings();
 
     // Listen for new transfer job
@@ -206,7 +294,22 @@ function App() {
     // Listen for file status updates
     const unlistenFileStatus = listen<[string, string, string]>("transfer://file-status", (event) => {
       const [jobId, fileSrc, status] = event.payload;
-      const parsedStatus = status as any;
+      
+      let parsedStatus: TransferFile["status"] = "Queued";
+      if (status === "Copying" || status === "Verifying" || status === "Done" || status === "Skipped" || status === "Queued") {
+        parsedStatus = status;
+      } else {
+        try {
+          const parsed = JSON.parse(status);
+          if (parsed && typeof parsed === "object" && "Error" in parsed) {
+            parsedStatus = parsed;
+          } else {
+            parsedStatus = { Error: status };
+          }
+        } catch {
+          parsedStatus = { Error: status };
+        }
+      }
 
       setActiveJobs(prevJobs => 
         prevJobs.map(job => {
@@ -275,7 +378,18 @@ function App() {
   const pickFiles = async () => {
     try {
       const files = await invoke<string[]>("select_files");
-      setSrcPaths(files);
+      setSrcPaths(prev => [...prev, ...files]);
+    } catch (e) {
+      console.warn("Cancelled picker:", e);
+    }
+  };
+
+  const pickSourceDir = async () => {
+    try {
+      const dir = await invoke<string>("select_directory");
+      if (dir) {
+        setSrcPaths(prev => [...prev, dir]);
+      }
     } catch (e) {
       console.warn("Cancelled picker:", e);
     }
@@ -521,7 +635,11 @@ function App() {
                           </button>
                         )}
                         {(selectedJob.status === "Running" || selectedJob.status === "Paused") && (
-                          <button className="btn btn-sm" style={{ borderColor: "var(--status-error)", color: "var(--status-error)" }} onClick={() => handleCancelJob(selectedJob.id)}>
+                          <button className="btn btn-sm" style={{ borderColor: "var(--status-error)", color: "var(--status-error)" }} onClick={() => {
+                            if (confirm("Are you sure you want to cancel this transfer? It cannot be resumed.")) {
+                              handleCancelJob(selectedJob.id);
+                            }
+                          }}>
                             ⏹️ Cancel
                           </button>
                         )}
@@ -591,41 +709,14 @@ function App() {
                 )}
               </div>
 
-              {/* Right Column: Queue Sidebar */}
-              <div className="right-panel">
-                <section className="glass-card" style={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
-                  <h3 className="card-title" style={{ marginBottom: "16px" }}>Active Queue</h3>
-                  <div className="job-list">
-                    {activeJobs.length === 0 ? (
-                      <div className="empty-state" style={{ padding: "32px 0" }}>
-                        <p style={{ fontSize: "0.9rem" }}>No queued jobs.</p>
-                      </div>
-                    ) : (
-                      activeJobs.map(job => (
-                        <div
-                          className={`job-card-small ${selectedJob?.id === job.id ? "active" : ""}`}
-                          key={job.id}
-                          onClick={() => setSelectedJob(job)}
-                        >
-                          <div className="job-card-header">
-                            <span className="job-card-title">{job.dest_dir.split(/[\\/]/).pop()}</span>
-                            <span className={`badge badge-${(typeof job.status === "object" ? "error" : job.status).toLowerCase()}`}>
-                              {getStatusString(job.status)}
-                            </span>
-                          </div>
-                          <div className="progress-track" style={{ height: "4px", margin: "8px 0" }}>
-                            <div className="progress-bar-fill" style={{ width: `${getPercent(job)}%` }}></div>
-                          </div>
-                          <div className="job-card-meta">
-                            <span>{getPercent(job)}%</span>
-                            <span>{formatSpeed(job.speed_bps)}</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </section>
-              </div>
+              <ActiveQueueSidebar
+                activeJobs={activeJobs}
+                selectedJob={selectedJob}
+                setSelectedJob={setSelectedJob}
+                getPercent={getPercent}
+                formatSpeed={formatSpeed}
+                getStatusString={getStatusString}
+              />
             </div>
           )}
 
@@ -696,7 +787,11 @@ function App() {
                           </span>
                           <span className="engine-meta-row">
                             <span>Buffer Size:</span>
-                            <span className="engine-meta-val">{formatSize(getAdaptiveBufferValue(selectedJob.bytes_total))}</span>
+                            <span className="engine-meta-val">
+                              {formatSize(getAdaptiveBufferValue(
+                                selectedJob.files.find(f => f.status === "Copying")?.bytes_total || 0
+                              ))}
+                            </span>
                           </span>
                         </div>
                       </div>
@@ -761,50 +856,26 @@ function App() {
                 )}
               </div>
 
-              {/* Right Column: Queue Sidebar */}
-              <div className="right-panel">
-                <section className="glass-card" style={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
-                  <h3 className="card-title" style={{ marginBottom: "16px" }}>Active Queue</h3>
-                  <div className="job-list">
-                    {activeJobs.length === 0 ? (
-                      <div className="empty-state" style={{ padding: "32px 0" }}>
-                        <p style={{ fontSize: "0.9rem" }}>No queued jobs.</p>
-                      </div>
-                    ) : (
-                      activeJobs.map(job => (
-                        <div
-                          className={`job-card-small ${selectedJob?.id === job.id ? "active" : ""}`}
-                          key={job.id}
-                          onClick={() => setSelectedJob(job)}
-                        >
-                          <div className="job-card-header">
-                            <span className="job-card-title">{job.dest_dir.split(/[\\/]/).pop()}</span>
-                            <span className={`badge badge-${(typeof job.status === "object" ? "error" : job.status).toLowerCase()}`}>
-                              {getStatusString(job.status)}
-                            </span>
-                          </div>
-                          <div className="progress-track" style={{ height: "4px", margin: "8px 0" }}>
-                            <div className="progress-bar-fill" style={{ width: `${getPercent(job)}%` }}></div>
-                          </div>
-                          <div className="job-card-meta">
-                            <span>{getPercent(job)}%</span>
-                            <span>{formatSpeed(job.speed_bps)}</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </section>
-              </div>
+              <ActiveQueueSidebar
+                activeJobs={activeJobs}
+                selectedJob={selectedJob}
+                setSelectedJob={setSelectedJob}
+                getPercent={getPercent}
+                formatSpeed={formatSpeed}
+                getStatusString={getStatusString}
+              />
             </div>
           )}
 
           {/* History Tab */}
           {activeTab === "history" && (
             <section className="glass-card">
-              <div className="card-header">
+              <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 className="card-title">Completed Transfers</h3>
-                <button className="btn btn-sm" onClick={refreshHistory}>🔄 Refresh</button>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button className="btn btn-sm btn-secondary" onClick={() => refreshHistory(historyPage)}>🔄 Refresh</button>
+                  <button className="btn btn-sm btn-danger" onClick={handleClearHistory}>🗑️ Clear All</button>
+                </div>
               </div>
               <div className="history-table-container">
                 {historyJobs.length === 0 ? (
@@ -814,42 +885,79 @@ function App() {
                     <p>All completed transfers will be detailed here.</p>
                   </div>
                 ) : (
-                  <table className="history-table">
-                    <thead>
-                      <tr>
-                        <th>Destination</th>
-                        <th>Type</th>
-                        <th>Status</th>
-                        <th>Size</th>
-                        <th>Speed</th>
-                        <th>Date Started</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {historyJobs.map(job => (
-                        <tr key={job.id} style={{ cursor: "pointer" }} onClick={() => { setSelectedJob(job); setActiveTab("dashboard"); }}>
-                          <td style={{ fontWeight: 500, color: "var(--text-title)" }}>
-                            <span title={job.dest_dir}>{job.dest_dir}</span>
-                          </td>
-                          <td>
-                            <span className="badge" style={{ background: "rgba(255,255,255,0.05)" }}>
-                              {job.is_move ? "Move" : "Copy"}
-                            </span>
-                          </td>
-                          <td>
-                            <span className={`badge badge-${(typeof job.status === "object" ? "error" : job.status).toLowerCase()}`}>
-                              {getStatusString(job.status)}
-                            </span>
-                          </td>
-                          <td>{formatSize(job.bytes_total)}</td>
-                          <td>{formatSpeed(job.speed_bps)}</td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                            {job.started_at ? new Date(job.started_at * 1000).toLocaleString() : "Unknown"}
-                          </td>
+                  <>
+                    <table className="history-table">
+                      <thead>
+                        <tr>
+                          <th>Destination</th>
+                          <th>Type</th>
+                          <th>Status</th>
+                          <th>Size</th>
+                          <th>Speed</th>
+                          <th>Date Started</th>
+                          <th style={{ width: "50px", textAlign: "center" }}>Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {historyJobs.map(job => (
+                          <tr key={job.id} style={{ cursor: "pointer" }} onClick={() => { setSelectedJob(job); setActiveTab("dashboard"); }}>
+                            <td style={{ fontWeight: 500, color: "var(--text-title)" }}>
+                              <span title={job.dest_dir}>{job.dest_dir}</span>
+                            </td>
+                            <td>
+                              <span className="badge" style={{ background: "rgba(255,255,255,0.05)" }}>
+                                {job.is_move ? "Move" : "Copy"}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={`badge badge-${(typeof job.status === "object" ? "error" : job.status).toLowerCase()}`}
+                                title={typeof job.status === "object" && "Error" in job.status ? job.status.Error : ""}
+                              >
+                                {getStatusString(job.status)}
+                              </span>
+                            </td>
+                            <td>{formatSize(job.bytes_total)}</td>
+                            <td>{formatSpeed(job.speed_bps)}</td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                              {job.started_at ? new Date(job.started_at * 1000).toLocaleString() : "Unknown"}
+                            </td>
+                            <td style={{ textAlign: "center" }}>
+                              <button
+                                className="btn btn-sm btn-icon"
+                                style={{ background: "transparent", border: "none", color: "var(--status-error)", fontSize: "1.1rem", padding: "2px", cursor: "pointer" }}
+                                onClick={(e) => handleDeleteHistoryJob(job.id, e)}
+                                title="Delete from history"
+                              >
+                                🗑️
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    
+                    {/* Pagination Controls */}
+                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "15px", marginTop: "20px", padding: "10px 0" }}>
+                      <button
+                        className="btn btn-sm"
+                        disabled={historyPage === 0}
+                        onClick={() => setHistoryPage(p => Math.max(0, p - 1))}
+                      >
+                        ◀ Previous
+                      </button>
+                      <span style={{ fontSize: "0.9rem", color: "var(--text-muted)", fontWeight: "500" }}>
+                        Page {historyPage + 1}
+                      </span>
+                      <button
+                        className="btn btn-sm"
+                        disabled={historyJobs.length < historyPerPage}
+                        onClick={() => setHistoryPage(p => p + 1)}
+                      >
+                        Next ▶
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             </section>
@@ -965,8 +1073,19 @@ function App() {
               )}
               
               <div className="form-group">
-                <label className="form-label">Source Paths</label>
-                <div className="input-row">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <label className="form-label" style={{ marginBottom: 0 }}>Source Paths</label>
+                  {srcPaths.length > 0 && (
+                    <button
+                      className="btn btn-sm"
+                      style={{ padding: "2px 8px", background: "rgba(244,63,94,0.15)", color: "var(--status-error)", border: "none", cursor: "pointer" }}
+                      onClick={() => setSrcPaths([])}
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+                <div className="input-row" style={{ gap: "8px" }}>
                   <input
                     className="form-input"
                     type="text"
@@ -974,7 +1093,8 @@ function App() {
                     value={srcPaths.join(", ")}
                     readOnly
                   />
-                  <button className="btn" onClick={pickFiles}>📂 Select</button>
+                  <button className="btn" onClick={pickFiles} title="Select Files">📄 +Files</button>
+                  <button className="btn" onClick={pickSourceDir} title="Select Folder">📁 +Folder</button>
                 </div>
               </div>
 
@@ -1095,7 +1215,11 @@ function App() {
                 </button>
                 <div style={{ content: '""' }}></div>
 
-                <button className="btn conflict-action-btn" style={{ borderColor: "var(--status-error)", opacity: 0.85 }} onClick={() => handleResolveConflict("OverwriteAll")}>
+                <button className="btn conflict-action-btn" style={{ borderColor: "var(--status-error)", opacity: 0.85 }} onClick={() => {
+                  if (confirm("Are you sure you want to overwrite ALL conflicting files? This cannot be undone.")) {
+                    handleResolveConflict("OverwriteAll");
+                  }
+                }}>
                   <span className="conflict-action-title" style={{ color: "var(--status-error)" }}>Overwrite All</span>
                   <span className="conflict-action-subtitle">Always overwrite</span>
                 </button>

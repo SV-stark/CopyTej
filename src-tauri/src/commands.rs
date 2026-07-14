@@ -1,6 +1,6 @@
+use crate::engine::TransferEngine;
 use crate::engine::conflict::{ConflictManager, ConflictResolution};
 use crate::engine::queue::QueueManager;
-use crate::engine::TransferEngine;
 use crate::engine::{JobStatus, TransferJob};
 use crate::store::db::DbManager;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub async fn pause_transfer_job(
     job_id: String,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&job_id).map_err(|e| e.to_string())?;
-    engine.pause();
+    engine.pause_job(uuid);
     db.update_job_status(uuid, JobStatus::Paused, None)
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -39,8 +39,8 @@ pub async fn resume_transfer_job(
     job_id: String,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&job_id).map_err(|e| e.to_string())?;
-    engine.resume();
-    db.update_job_status(uuid, JobStatus::Running, None)
+    engine.resume_job(uuid);
+    db.update_job_status(uuid, JobStatus::Queued, None)
         .map_err(|e| e.to_string())?;
     queue_manager.trigger_worker();
     Ok(())
@@ -53,9 +53,13 @@ pub async fn cancel_transfer_job(
     job_id: String,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&job_id).map_err(|e| e.to_string())?;
-    engine.cancel();
-    db.update_job_status(uuid, JobStatus::Done, Some(chrono::Utc::now().timestamp()))
-        .map_err(|e| e.to_string())?;
+    engine.cancel_job(uuid);
+    db.update_job_status(
+        uuid,
+        JobStatus::Canceled,
+        Some(chrono::Utc::now().timestamp()),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -111,63 +115,70 @@ pub async fn get_setting(
 
 #[tauri::command]
 pub async fn set_setting(
+    engine: State<'_, Arc<TransferEngine>>,
     db: State<'_, Arc<DbManager>>,
     key: String,
     value: String,
 ) -> Result<(), String> {
-    db.set_setting(&key, &value).map_err(|e| e.to_string())
+    db.set_setting(&key, &value).map_err(|e| e.to_string())?;
+    if key == "speed_limit_kbps" {
+        let val = value.parse::<u64>().unwrap_or(0);
+        engine
+            .global_speed_limit_kbps
+            .store(val, std::sync::atomic::Ordering::SeqCst);
+    }
+    Ok(())
 }
 
-#[tauri::command]
-pub async fn select_directory() -> Result<String, String> {
-    let output = tokio::process::Command::new("powershell")
-        .args(&[
-            "-NoProfile",
-            "-Command",
-            "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Select Destination Folder'; if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }",
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() {
-            Err("Cancelled".to_string())
-        } else {
-            Ok(path)
+fn file_path_to_string(file_path: tauri_plugin_dialog::FilePath) -> String {
+    match file_path {
+        tauri_plugin_dialog::FilePath::Path(path_buf) => path_buf.to_string_lossy().to_string(),
+        tauri_plugin_dialog::FilePath::Url(url) => {
+            if let Ok(p) = url.to_file_path() {
+                p.to_string_lossy().to_string()
+            } else {
+                url.path().to_string()
+            }
         }
-    } else {
-        Err("Failed to open folder picker".to_string())
     }
 }
 
 #[tauri::command]
-pub async fn select_files() -> Result<Vec<String>, String> {
-    let output = tokio::process::Command::new("powershell")
-        .args(&[
-            "-NoProfile",
-            "-Command",
-            "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Multiselect = $true; $dialog.Title = 'Select Files/Folders'; if ($dialog.ShowDialog() -eq 'OK') { $dialog.FileNames -join '|' }",
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn select_directory(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let folder_path = app.dialog().file().blocking_pick_folder();
 
-    if output.status.success() {
-        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path_str.is_empty() {
-            Err("Cancelled".to_string())
-        } else {
-            Ok(path_str
-                .split('|')
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect())
-        }
-    } else {
-        Err("Failed to open file picker".to_string())
+    match folder_path {
+        Some(path) => Ok(file_path_to_string(path)),
+        None => Err("Cancelled".to_string()),
     }
+}
+
+#[tauri::command]
+pub async fn select_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let file_paths = app.dialog().file().blocking_pick_files();
+
+    match file_paths {
+        Some(paths) => {
+            let list: Vec<String> = paths.into_iter().map(file_path_to_string).collect();
+            Ok(list)
+        }
+        None => Err("Cancelled".to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn delete_job(db: State<'_, Arc<DbManager>>, job_id: String) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&job_id).map_err(|e| e.to_string())?;
+    db.delete_job(uuid).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_history(db: State<'_, Arc<DbManager>>) -> Result<(), String> {
+    db.clear_history().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
