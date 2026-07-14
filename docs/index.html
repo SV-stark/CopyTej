@@ -49,7 +49,7 @@
       </div>
       <h1 class="hero-title">High-Performance File Transfers <br><span class="gradient-text">Without the Overhead</span></h1>
       <p class="hero-subtitle">
-        CopyTej is a modern, single-instance alternative to TeraCopy and UltraCopier. Featuring dynamic rate limiting, instant NTFS block cloning, metadata preservation, and smart overwrite policies.
+        CopyTej is a modern, single-instance alternative to TeraCopy and UltraCopier. Featuring dynamic rate limiting, instant NTFS block cloning, metadata preservation, and smart retry policies.
       </p>
       
       <div class="cta-container">
@@ -82,10 +82,10 @@
             <div class="mockup-card progress-card">
               <div class="progress-title-row">
                 <div>
-                  <h4 style="margin: 0; color: #fff;">Copying 18 items</h4>
-                  <small style="color: #8892b0;">To: D:\Backups\Projects</small>
+                  <h4 style="margin: 0; color: var(--text-title);">Copying 18 items</h4>
+                  <small style="color: var(--text-muted);">To: D:\Backups\Projects</small>
                 </div>
-                <div style="font-size: 1.5rem; font-weight: 700; color: #64ffda;">74%</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: var(--accent-cyan);">74%</div>
               </div>
               <div class="mockup-progress-bar">
                 <div class="mockup-progress-fill" style="width: 74%;"></div>
@@ -93,7 +93,7 @@
               <div class="mockup-stats-row">
                 <div class="stat-box">
                   <div class="stat-label">Current File</div>
-                  <div class="stat-value" style="color: #64ffda;">main.tar.gz (4.2 GB)</div>
+                  <div class="stat-value" style="color: var(--accent-cyan);">main.tar.gz (4.2 GB)</div>
                 </div>
                 <div class="stat-box">
                   <div class="stat-label">Transfer Speed</div>
@@ -123,31 +123,31 @@
         <div class="feature-card glass-card">
           <div class="feature-icon">📁</div>
           <h3 class="feature-title">NTFS/ReFS Block Cloning</h3>
-          <p class="feature-desc">Utilizes Windows <code>DeviceIoControl</code>. Transfers on the same drive copy instantly (0ms) at metadata-only speed with zero byte overhead.</p>
+          <p class="feature-desc">Utilizes Windows reflinking (Copy-on-Write) to clone directories instantly (0ms) on same-drive volume operations with zero storage overhead.</p>
         </div>
 
         <div class="feature-card glass-card">
           <div class="feature-icon">🏎️</div>
           <h3 class="feature-title">Dynamic Rate Limiting</h3>
-          <p class="feature-desc">A centralized dynamic token-bucket rate limiter throttles bandwidth collectively across all parallel copy jobs in real time.</p>
+          <p class="feature-desc">Centralized dynamic token-bucket rate limiter throttles bandwidth collectively across all parallel copy jobs in real time.</p>
         </div>
 
         <div class="feature-card glass-card">
-          <div class="feature-icon">🛡️</div>
-          <h3 class="feature-title">On-the-Fly Verification</h3>
-          <p class="feature-desc">Computes Blake3, XXHash3, MD5, or SHA-256 checksums concurrently during the write loop, saving extra read cycles.</p>
+          <div class="feature-icon">🔄</div>
+          <h3 class="feature-title">Auto-Retry & Resume</h3>
+          <p class="feature-desc">Automatically retries transient I/O or network glitches (up to 3 times), resuming copying from the exact byte offset of the failure.</p>
         </div>
 
         <div class="feature-card glass-card">
-          <div class="feature-icon">🫳</div>
-          <h3 class="feature-title">Native Drag & Drop</h3>
-          <p class="feature-desc">Drop files and folders directly onto the dashboard window to automatically queue them for copying instantly.</p>
+          <div class="feature-icon">📊</div>
+          <h3 class="feature-title">CSV/JSON Log Exporter</h3>
+          <p class="feature-desc">Export detailed transfer reports listing copy status, sizes, duration, file paths, checksum matches, and error logs.</p>
         </div>
 
         <div class="feature-card glass-card">
-          <div class="feature-icon">🔗</div>
-          <h3 class="feature-title">Explorer Context Menu</h3>
-          <p class="feature-desc">Integrates "Copy with CopyTej" directly into the right-click menu of your files and folders—requires zero admin rights.</p>
+          <div class="feature-icon">🎵</div>
+          <h3 class="feature-title">Synthetic Audio Chimes</h3>
+          <p class="feature-desc">Plays synthetic completion sounds synthesized dynamically using the HTML5 Web Audio API, with a toggle switch in settings.</p>
         </div>
 
         <div class="feature-card glass-card">
@@ -169,7 +169,7 @@
 
       <div class="speed-flex">
         <div class="chart-container glass-card">
-          <h4 style="margin-top: 0; color: #fff;">10 GB File Transfer Duration (Seconds)</h4>
+          <h4 style="margin-top: 0; color: var(--text-title);">10 GB File Transfer Duration (Seconds)</h4>
           <div class="bar-group">
             <div class="bar-label">Windows Copy</div>
             <div class="bar-wrapper">
@@ -188,10 +188,10 @@
             <div class="bar-label">CopyTej (Block Cloning)</div>
             <div class="bar-wrapper">
               <div class="bar-fill bar-copytej" style="width: 5%;"></div>
-              <span class="bar-value" style="color: #64ffda; font-weight: 700;">0.01s (Instant)</span>
+              <span class="bar-value" style="color: var(--accent-cyan); font-weight: 700;">0.01s (Instant)</span>
             </div>
           </div>
-          <p style="font-size: 0.85rem; color: #8892b0; margin-top: 24px; line-height: 1.5;">
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 24px; line-height: 1.5;">
             * Same-volume transfers leverage instant reflinking (NTFS Copy-on-Write block cloning), bypassing traditional I/O entirely.
           </p>
         </div>
@@ -238,22 +238,31 @@
             <div class="card-badge">Source File (Incoming)</div>
             <h3>backup_config.json</h3>
             <div class="detail-row"><span>Size:</span> <span>14.5 KB</span></div>
-            <div class="detail-row"><span>Modified:</span> <span style="color: #64ffda;">Today, 8:42 PM (Newer)</span></div>
+            <div class="detail-row"><span>Modified:</span> <span style="color: var(--accent-cyan);">Today, 8:42 PM (Newer)</span></div>
           </div>
 
           <div class="demo-card dest">
-            <div class="card-badge" style="background: rgba(255,255,255,0.05); color: #8892b0;">Destination File (Existing)</div>
+            <div class="card-badge" style="background: rgba(0,0,0,0.03); color: var(--text-muted);">Destination File (Existing)</div>
             <h3>backup_config.json</h3>
             <div class="detail-row"><span>Size:</span> <span>12.1 KB</span></div>
             <div class="detail-row"><span>Modified:</span> <span>Yesterday, 10:15 AM</span></div>
           </div>
         </div>
 
-        <div class="demo-actions">
+        <div class="demo-actions" style="margin-bottom: 24px;">
           <button class="demo-btn danger" onclick="resolveDemo('Overwrite')">Overwrite</button>
           <button class="demo-btn" onclick="resolveDemo('Skip')">Skip</button>
           <button class="demo-btn purple" onclick="resolveDemo('Rename')">Auto-Rename</button>
           <button class="demo-btn warning" onclick="resolveDemo('Overwrite Older')">Overwrite Older</button>
+        </div>
+
+        <!-- Chime Synthesizer Tester -->
+        <div class="sound-demo-box" style="margin-top: 32px; border-top: 1px solid var(--border-color); padding-top: 24px; text-align: center;">
+          <h4 style="color: var(--text-title); margin-bottom: 16px;">🎵 Listen to Synthetic Sound Effects</h4>
+          <div style="display: flex; justify-content: center; gap: 16px;">
+            <button class="demo-btn" onclick="playWebChime('success')" style="border-color: rgba(13, 148, 136, 0.3); color: var(--accent-cyan);">🔊 Success Chime</button>
+            <button class="demo-btn danger" onclick="playWebChime('error')">🔊 Warning Chime</button>
+          </div>
         </div>
       </div>
     </div>
@@ -347,6 +356,53 @@
       setTimeout(() => {
         notification.classList.remove('show');
       }, 3000);
+    }
+
+    function playWebChime(type) {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (type === 'success') {
+          // Play ascending major chime (C5 -> E5 -> G5 -> C6)
+          const notes = [523.25, 659.25, 783.99, 1046.50];
+          notes.forEach((freq, index) => {
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + index * 0.1);
+            
+            gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime + index * 0.1);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + index * 0.1 + 0.4);
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            osc.start(audioCtx.currentTime + index * 0.1);
+            osc.stop(audioCtx.currentTime + index * 0.1 + 0.4);
+          });
+        } else {
+          // Play descending minor third warning chime (Eb5 -> C5)
+          const notes = [622.25, 523.25];
+          notes.forEach((freq, index) => {
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + index * 0.15);
+            
+            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime + index * 0.15);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + index * 0.15 + 0.5);
+            
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            osc.start(audioCtx.currentTime + index * 0.15);
+            osc.stop(audioCtx.currentTime + index * 0.15 + 0.5);
+          });
+        }
+      } catch (e) {
+        console.error("Audio Context failed:", e);
+      }
     }
   </script>
 </body>

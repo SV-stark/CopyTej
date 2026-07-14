@@ -1,24 +1,28 @@
-# CopyTej — High-Performance TeraCopy & UltraCopier Replacement
+# CopyTej — High-Performance File Transfer Utility
 
 [![Build & Package](https://github.com/SV-stark/CopyTej/actions/workflows/build.yml/badge.svg)](https://github.com/SV-stark/CopyTej/actions/workflows/build.yml)
 [![Download Nightly Setup](https://img.shields.io/badge/Download-Nightly%20Release-blueviolet?logo=github&style=flat-square)](https://github.com/SV-stark/CopyTej/releases/tag/nightly)
 
-CopyTej is a high-performance, single-instance file transfer utility built with **Tauri v2**, **React**, **TypeScript**, and **Rust**. It provides a clean, native Windows Fluent interface and replicates the core features of TeraCopy and UltraCopier, including double-buffered file I/O, on-the-fly verification, NTFS block cloning, metadata preservation, and smart overwrite rules.
+CopyTej is a blazing-fast, single-instance file transfer utility built with **Tauri v2**, **React**, **TypeScript**, and **Rust**. Designed as a modern Windows Fluent interface alternative to TeraCopy and UltraCopier, it maximizes local and network storage transfer speeds while offering advanced automation and safety controls.
 
 ---
 
 ## 🚀 Key Features
 
-* **NTFS/ReFS Block Cloning (Reflinks):** Implemented native Windows `DeviceIoControl` hook (`FSCTL_DUPLICATE_EXTENTS_TO_FILE`). Same-drive transfers on supported file systems copy instantly (0ms) and use 0 extra bytes.
-* **Asynchronous Double-Buffering:** Read chunks from source files in a background thread while concurrently writing to the destination, maximizing speed on local SSDs, HDDs, and network locations.
-* **On-the-Fly Hashing & Verification:** Computes Blake3, XXHash3, MD5, or SHA-256 checksums on-the-fly during write loops to prevent redundant read cycles.
-* **Smart Overwrite Rules:** Logical conflict resolution options including **Overwrite Older Only** (comparing file modification times) and **Skip Same Size & Date** (automated duplicate skipping).
-* **Metadata & Attribute Preservation:** Replicates exact Creation, Modification, and Access timestamps via the `std::fs::FileTimes` API and applies Windows File Attributes (Hidden, System, Archive, Read-Only) via inline FFI.
-* **Same-Drive Move Optimizations:** Instantly renames files (`std::fs::rename`) when moving items within the same physical volume root instead of slow chunk copying.
-* **Single-Instance CLI Forwarding:** Launches a background named pipe server at `\\.\pipe\CopyTej`. Launching a second instance (e.g. from Explorer) serializes CLI paths, forwards them to the active instance's transfer queue, and exits immediately.
-* **Windows Context Menu Integration:** Add right-click shortcuts to copy/move files directly via CopyTej.
-* **Windows Fluent UI Dashboard:** Real-time speed charts, ETA calculators, active queue selectors, detailed file history, and interactive side-by-side conflict card grids designed like a native Windows desktop app.
-* **Interactive I/O Pipeline Flow:** Real-time visual representation of file read stages, dynamic buffer utilization, hash-verification engine, and destination verification checks.
+* **NTFS/ReFS Block Cloning (Reflinks):** Leverages native Windows `DeviceIoControl` (`FSCTL_DUPLICATE_EXTENTS_TO_FILE`). Same-volume copies complete instantly (0ms) and consume zero extra storage space.
+* **Same-Volume Parent Folder Move Optimization:** If moving a folder within the same drive volume, CopyTej instantly renames the parent directory in `0ms` instead of walking child structures and copying files individually.
+* **Centralized Global Rate Limiter:** A thread-safe token-bucket rate limiter throttles bandwidth collectively across all running parallel copy jobs in real time.
+* **Asynchronous File Auto-Retry & Resume:** Automatically retries transient network or I/O failures (up to 3 times, waiting 5 seconds between attempts). It resumes writing from the **exact byte offset** of the failure to prevent restarting long copies.
+* **File Size Validation on Resume:** When resuming a paused transfer, CopyTej compares the current source file size with the initial metadata record to safeguard against corrupted data.
+* **Asynchronous Double-Buffering:** Decouples reading and writing using Tokio channels to saturate local SSDs, HDDs, and network locations without locking file systems.
+* **On-the-Fly Hashing & Verification:** Computes Blake3, XXHash3, MD5, or SHA-256 checksums concurrently during the write loop to avoid redundant read cycles.
+* **Detailed Transfer Log Exporter:** Export transfer manifests directly from the History tab into formatted CSV or JSON reports containing source, destination, sizes, checksums, and error descriptions.
+* **Synthetic Sound chimes:** Generates clean digital chimes dynamically via the HTML5 Web Audio API (ascending major arpeggio for successful completions, triangle minor-third drop for warnings/errors) with a settings toggle.
+* **Single-Instance CLI Named Pipe Server:** Runs a named pipe server at `\\.\pipe\CopyTej`. Second launches (e.g. from Explorer right-click) serialize path arguments and forward them directly to the active transfer queue, exiting instantly.
+* **Native Windows Explorer Context Menu (HKCU):** Integrates "Copy with CopyTej" and "Move with CopyTej" directly into the right-click menu for both files and directories without requiring administrator rights.
+* **Tauri Drag & Drop Integration:** Drop files and folders directly onto the dashboard window to instantly parse paths and configure transfer jobs.
+* **Smart Overwrite Rules:** Interactive side-by-side collision cards let you resolve naming conflicts with options like Overwrite Older, Skip Same Size/Date, and Auto-Rename.
+* **Windows Fluent UI Dashboard:** Responsive grid layouts, real-time speed charts, moving average ETA calculations, active sidebar selectors, and detailed file history.
 
 ---
 
@@ -41,22 +45,19 @@ CopyTej is a high-performance, single-instance file transfer utility built with 
      │  Running Named Pipe    │                    │  New Tauri App Window  │
      │  Server (\pipe\CopyTej)│                    │  (Initial Instance)    │
      └────────────────────────┘                    └───────────┬────────────┘
-                                                               │
-                                                               ▼
-                                                   ┌────────────────────────┐
-                                                   │  Tauri Rust Backend    │
-                                                   │  (TransferEngine, DB)  │
-                                                   └───────────┬────────────┘
-                                                               │
-                                                               ▼
+                                                                │
+                                                                ▼
                                                     ┌────────────────────────┐
-                                                    │  Fluent React          │
-                                                    │  Frontend Dashboard    │
-                                                    └────────────────────────┘
+                                                    │  Tauri Rust Backend    │
+                                                    │  (TransferEngine, DB)  │
+                                                    └───────────┬────────────┘
+                                                                │
+                                                                ▼
+                                                     ┌────────────────────────┐
+                                                     │  Fluent React          │
+                                                     │  (Web Audio, Frontend) │
+                                                     └────────────────────────┘
 ```
-
-* **Backend (Rust):** Handled by a structured transfer manager utilizing Tokio-based channels, SQLite (rusqlite) task logging, and inline Windows FFI bindings.
-* **Frontend (React / TypeScript):** Clean, flat Windows design system built using CSS grid structures, native border profiles, and Tauri event listener hooks (`transfer://file-progress`, `transfer://conflict`, etc.).
 
 ---
 
@@ -72,7 +73,7 @@ CopyTej is a high-performance, single-instance file transfer utility built with 
 
 1. Clone the repository and navigate to the project directory:
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/SV-stark/CopyTej.git
    cd CopyTej
    ```
 
@@ -98,31 +99,19 @@ The compiled executable will be located in: `src-tauri/target/release/copytej-ap
 
 ---
 
-## 🎛️ Explorer Context Menu Setup
+## ⚙️ Settings & System Integration
 
-To add CopyTej to your Windows right-click options:
-
-1. Compile the app in release mode (`npm run tauri build`).
-2. Open PowerShell as an **Administrator**.
-3. Run the registration script:
-   ```powershell
-   Set-ExecutionPolicy Bypass -Scope Process
-   ./register_context_menu.ps1
-   ```
-4. This adds **"Copy with CopyTej"** and **"Move with CopyTej"** entries to your context menu for files and folders.
-5. To remove the context menu entries, run:
-   ```powershell
-   ./register_context_menu.ps1 -Unregister
-   ```
+* **Explorer Context Menu:** Toggle context menu shortcuts directly from the **Settings** tab. It registers paths dynamically in the registry under `HKCU\Software\Classes` (safe and requires no UAC administrator elevation).
+* **Rate Limiter:** Set global throttle limits (e.g. 50000 for 50MB/s) in the settings panel. Enter 0 for unlimited transfer speed.
 
 ---
 
 ## 🧪 Running Tests
 
-A comprehensive unit test suite is provided to validate database safety, hashing speeds, buffer adjustments, and oneshot conflict channels:
+A comprehensive unit test suite is provided to validate database safety, hashing speeds, buffer adjustments, and oneshot conflict channels.
 
-Run the tests using Cargo or Cargo Nextest:
+Run the tests using Cargo:
 ```bash
 cd src-tauri
-cargo nextest run
+cargo test
 ```
