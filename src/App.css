@@ -69,12 +69,10 @@
   background: rgba(255, 255, 255, 0.28);
 }
 
-body {
+html, body {
+  /* Must be transparent so the OS Mica/Acrylic effect shows through the WebView */
+  background: transparent !important;
   overflow: hidden;
-  /* Mica effect: semi-transparent app layer over desktop */
-  background: var(--bg-primary);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
   min-height: 100vh;
 }
 
@@ -82,24 +80,23 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
+  background: transparent;
 }
 
-/* App Container */
+/* App Container — transparent to let Mica show through */
 .app-container {
   display: flex;
   width: 100%;
   height: 100%;
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 /* Sidebar styling */
 .sidebar {
   width: var(--sidebar-width);
-  /* WinUI 3 NavigationView sidebar: slightly different Mica surface */
-  background: rgba(28, 28, 28, 0.75);
-  backdrop-filter: blur(30px) saturate(1.8);
-  -webkit-backdrop-filter: blur(30px) saturate(1.8);
-  border-right: 1px solid var(--border-color);
+  /* Semi-transparent surface layered over real Mica background */
+  background: rgba(22, 22, 22, 0.45);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
   display: flex;
   flex-direction: column;
   padding: 16px 8px;
@@ -206,13 +203,13 @@ body {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  background: transparent;
 }
 
 .top-bar {
   height: 48px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-  backdrop-filter: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(22, 22, 22, 0.40);
   padding: 0 24px;
   display: flex;
   align-items: center;
@@ -296,26 +293,25 @@ body {
   padding: 16px;
   overflow-y: auto;
   height: calc(100% - 48px);
+  background: transparent;
 }
 
-/* WinUI 3 Card: Mica surface + layered border (light top, dark bottom) */
+/* WinUI 3 Card: semi-transparent surface sitting above real Mica */
 .glass-card {
-  background: rgba(40, 40, 40, 0.70);
+  background: rgba(32, 32, 32, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-top-color: rgba(255, 255, 255, 0.13);
-  border-bottom-color: rgba(0, 0, 0, 0.30);
+  border-bottom-color: rgba(0, 0, 0, 0.28);
   border-radius: 8px;
   padding: 16px;
-  backdrop-filter: blur(12px) saturate(1.4);
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   margin-bottom: 16px;
   transition: border-color var(--transition-speed) ease, box-shadow var(--transition-speed) ease;
 }
 
 .glass-card:hover {
   border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 /* Transfer Dashboard */

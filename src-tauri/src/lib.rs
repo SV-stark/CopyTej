@@ -19,6 +19,8 @@ use crate::store::db::DbManager;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tauri::Manager;
+#[cfg(target_os = "windows")]
+use window_vibrancy::{apply_acrylic, apply_mica};
 
 pub struct InitialArgs {
     pub src_paths: Mutex<Vec<String>>,
@@ -154,6 +156,16 @@ pub fn run() {
             app.manage(engine);
             app.manage(conflict_manager);
             app.manage(queue_manager);
+
+            // Apply real OS-level Mica / Acrylic vibrancy effect
+            // Mica = Windows 11 (build >= 22000); Acrylic = Windows 10 fallback
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                // Try Mica first (Win11), fall back to Acrylic (Win10)
+                if apply_mica(&window, Some(true)).is_err() {
+                    let _ = apply_acrylic(&window, Some((18, 18, 18, 180)));
+                }
+            }
 
             Ok(())
         })
