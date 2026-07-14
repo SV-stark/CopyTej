@@ -645,33 +645,37 @@ function App() {
               className={`nav-item ${activeTab === "dashboard" ? "active" : ""}`}
               onClick={() => { setActiveTab("dashboard"); refreshActiveJobs(); }}
             >
-              <span className="nav-icon">⚡</span>
+              {/* Segoe Fluent Icon: Transfer */}
+              <span className="nav-icon" aria-hidden="true">&#xE8AB;</span>
               <span>Transfers</span>
             </div>
             <div
               className={`nav-item ${activeTab === "topology" ? "active" : ""}`}
               onClick={() => { setActiveTab("topology"); refreshActiveJobs(); }}
             >
-              <span className="nav-icon">🧬</span>
+              {/* Segoe Fluent Icon: BranchFork */}
+              <span className="nav-icon" aria-hidden="true">&#xE9BA;</span>
               <span>Pipeline Flow</span>
             </div>
             <div
               className={`nav-item ${activeTab === "history" ? "active" : ""}`}
               onClick={() => { setActiveTab("history"); refreshHistory(); }}
             >
-              <span className="nav-icon">🕒</span>
+              {/* Segoe Fluent Icon: History */}
+              <span className="nav-icon" aria-hidden="true">&#xE81C;</span>
               <span>History</span>
             </div>
             <div
               className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
               onClick={() => { setActiveTab("settings"); loadSettings(); }}
             >
-              <span className="nav-icon">⚙️</span>
+              {/* Segoe Fluent Icon: Settings */}
+              <span className="nav-icon" aria-hidden="true">&#xE713;</span>
               <span>Settings</span>
             </div>
           </nav>
         </div>
-        <div className="version-info">CopyTej v0.1.0</div>
+        <div className="version-info">CopyTej v0.3.0</div>
       </aside>
 
       {/* Main Panel */}
@@ -686,7 +690,8 @@ function App() {
           <div className="top-bar-actions">
             {(activeTab === "dashboard" || activeTab === "topology") && (
               <button className="btn btn-primary" onClick={() => setNewJobModal(true)}>
-                <span>➕</span> New Transfer
+                {/* Segoe Fluent Icon: Add */}
+                <span className="nav-icon" aria-hidden="true" style={{fontFamily: 'var(--fluent-icon-font)', fontSize: '14px'}}>&#xE710;</span> New Transfer
               </button>
             )}
           </div>

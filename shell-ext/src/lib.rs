@@ -1,5 +1,5 @@
-use windows::core::HRESULT;
 use windows::Win32::Foundation::HINSTANCE;
+use windows::core::HRESULT;
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
