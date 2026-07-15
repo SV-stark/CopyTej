@@ -107,6 +107,13 @@ body {
   font-size: 1.1rem;
 }
 
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
 .brand-name {
   font-family: 'Outfit', sans-serif;
   font-size: 1.4rem;
