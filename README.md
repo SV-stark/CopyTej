@@ -1,5 +1,9 @@
 # CopyTej — High-Performance File Transfer Utility
 
+<p align="center">
+  <img src="public/logo.png" alt="CopyTej Logo" width="160" />
+</p>
+
 [![Build & Package](https://github.com/SV-stark/CopyTej/actions/workflows/build.yml/badge.svg)](https://github.com/SV-stark/CopyTej/actions/workflows/build.yml)
 [![Download Nightly Setup](https://img.shields.io/badge/Download-Nightly%20Release-blueviolet?logo=github&style=flat-square)](https://github.com/SV-stark/CopyTej/releases/tag/nightly)
 
