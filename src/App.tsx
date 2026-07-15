@@ -637,7 +637,7 @@ function App() {
       <aside className="sidebar">
         <div>
           <div className="brand-section">
-            <div className="brand-icon">T</div>
+            <img className="brand-icon" src="/logo.png" alt="CopyTej" />
             <div className="brand-title">CopyTej</div>
           </div>
           <nav className="nav-list">
