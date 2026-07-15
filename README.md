@@ -6,6 +6,7 @@
 
 [![Build & Package](https://github.com/SV-stark/CopyTej/actions/workflows/build.yml/badge.svg)](https://github.com/SV-stark/CopyTej/actions/workflows/build.yml)
 [![Download Nightly Setup](https://img.shields.io/badge/Download-Nightly%20Release-blueviolet?logo=github&style=flat-square)](https://github.com/SV-stark/CopyTej/releases/tag/nightly)
+[![Webpage](https://img.shields.io/badge/Webpage-CopyTej%20Site-blue?logo=githubpages&style=flat-square)](https://sv-stark.github.io/CopyTej/)
 
 CopyTej is a blazing-fast, single-instance file transfer utility built with **Tauri v2**, **React**, **TypeScript**, and **Rust**. Designed as a modern Windows Fluent interface alternative to TeraCopy and UltraCopier, it maximizes local and network storage transfer speeds while offering advanced automation and safety controls.
 

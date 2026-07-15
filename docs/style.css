@@ -7,9 +7,9 @@
   --text-body: #334155; /* Slate 700 */
   --text-muted: #64748b; /* Slate 500 */
   
-  --accent-cyan: #0d9488; /* Darker teal for light mode readability */
-  --accent-purple: #7c3aed; /* Violet 600 */
-  --accent-blue: #2563eb; /* Blue 600 */
+  --accent-cyan: #60cdff; /* CopyTej cyan */
+  --accent-purple: #0078d4; /* CopyTej Fluent blue */
+  --accent-blue: #0067be; /* CopyTej blue gradient end */
   --accent-orange: #ea580c; /* Orange 600 */
   --status-error: #dc2626; /* Red 600 */
 }
