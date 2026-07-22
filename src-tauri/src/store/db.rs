@@ -26,6 +26,13 @@ impl DbManager {
     fn init_tables(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
+        let _ = conn.execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+        ",
+        );
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS transfers (
                 id TEXT PRIMARY KEY,
@@ -356,7 +363,7 @@ mod tests {
     #[test]
     fn test_db_settings() {
         let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join(format!("copytej_test_settings_{}.db", Uuid::new_v4()));
+        let db_path = temp_dir.join(format!("copytej_test_settings_{}.db", Uuid::now_v7()));
         let db = DbManager::new(db_path.clone()).unwrap();
 
         assert_eq!(db.get_setting("test_key").unwrap(), None);
@@ -373,10 +380,10 @@ mod tests {
     #[test]
     fn test_db_job_operations() {
         let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join(format!("copytej_test_jobs_{}.db", Uuid::new_v4()));
+        let db_path = temp_dir.join(format!("copytej_test_jobs_{}.db", Uuid::now_v7()));
         let db = DbManager::new(db_path.clone()).unwrap();
 
-        let job_id = Uuid::new_v4();
+        let job_id = Uuid::now_v7();
         let file = TransferFile {
             src: "src/path/file.txt".to_string(),
             dest: "dest/path/file.txt".to_string(),

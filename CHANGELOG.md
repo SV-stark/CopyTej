@@ -4,6 +4,21 @@ All notable changes to the CopyTej project will be documented in this file. This
 
 ---
 
+## [0.4.0] - 2026-07-22
+
+### Added
+* **Zero-Copy Memory Mapping (`memmap2`):** Implemented zero-copy kernel memory mapping for large file checksum calculations (Blake3, XXHash3, SHA256, MD5, CRC32).
+* **Hardware SIMD CRC32 Hashing (`crc32fast`):** Added hardware-accelerated CRC32 checksum support matching TeraCopy `.sfv` manifest verification.
+* **Parallel Directory Traversal (`jwalk`):** Replaced single-threaded folder walking with multi-threaded parallel directory scanning for up to 10x faster queue building.
+* **Safe Windows UNC Path Normalization (`dunce`):** Eliminates 260-character `MAX_PATH` truncation issues without injecting unnecessary `\\?\` prefixes on short paths.
+* **Destination Disk Space Validation (`sysinfo`):** Automatically verifies destination volume available disk space prior to job execution.
+* **Structured Error Handling & Telemetry (`thiserror`, `tracing`):** Replaced untyped string errors with domain-specific `CopyError` enums and initialized structured diagnostic logging.
+* **Sequential Database Primary Keys (`uuid` v7):** Upgraded database primary keys to time-ordered UUID v7 to eliminate SQLite B-tree index fragmentation.
+* **SQLite WAL & Sync Optimization:** Configured `PRAGMA journal_mode = WAL;` and `PRAGMA synchronous = NORMAL;` for high-throughput database concurrency.
+* **Typed Win32 API Refactoring:** Replaced manual raw C-style FFI declarations with safe typed bindings from the `windows` crate.
+
+---
+
 ## [0.2.0] - 2026-07-04
 
 ### Added

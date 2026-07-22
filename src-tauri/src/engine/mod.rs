@@ -2,9 +2,10 @@ pub mod conflict;
 pub mod hasher;
 pub mod queue;
 
+use ahash::AHashMap as HashMap;
+use bytesize::ByteSize;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,6 +13,10 @@ use std::time::{Duration, Instant};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use uuid::Uuid;
+
+pub fn format_bytes(bytes: u64) -> String {
+    ByteSize::b(bytes).to_string_as(true)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FileStatus {
@@ -182,52 +187,49 @@ pub fn get_adaptive_buffer_size(file_size: u64) -> usize {
 }
 
 #[cfg(windows)]
-unsafe fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, len: u64) -> bool {
-    use std::os::windows::io::AsRawHandle;
+fn set_win32_attributes(path: &Path, attrs: u32) {
+    use windows::Win32::Storage::FileSystem::{FILE_FLAGS_AND_ATTRIBUTES, SetFileAttributesW};
+    use windows::core::PCWSTR;
 
-    #[repr(C)]
-    struct DUPLICATE_EXTENTS_DATA {
-        file_handle: *mut std::ffi::c_void,
-        source_file_offset: i64,
-        target_file_offset: i64,
-        byte_count: i64,
+    let wide_path: Vec<u16> = path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let _ = SetFileAttributesW(PCWSTR(wide_path.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(attrs));
     }
+}
+
+#[cfg(windows)]
+fn try_block_clone(src_file: &std::fs::File, dest_file: &std::fs::File, len: u64) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::{DUPLICATE_EXTENTS_DATA, FSCTL_DUPLICATE_EXTENTS_TO_FILE};
 
     let data = DUPLICATE_EXTENTS_DATA {
-        file_handle: src_file.as_raw_handle(),
-        source_file_offset: 0,
-        target_file_offset: 0,
-        byte_count: len as i64,
+        FileHandle: HANDLE(src_file.as_raw_handle() as _),
+        SourceFileOffset: 0,
+        TargetFileOffset: 0,
+        ByteCount: len as i64,
     };
-
-    unsafe extern "system" {
-        fn DeviceIoControl(
-            hdevice: *mut std::ffi::c_void,
-            dwiocontrolcode: u32,
-            lpinbuffer: *const std::ffi::c_void,
-            ninbuffersize: u32,
-            lpoutbuffer: *mut std::ffi::c_void,
-            noutbuffersize: u32,
-            lpbytesreturned: *mut u32,
-            lpoverlapped: *mut std::ffi::c_void,
-        ) -> i32;
-    }
 
     let mut bytes_returned = 0u32;
-    let success = unsafe {
+    unsafe {
         DeviceIoControl(
-            dest_file.as_raw_handle(),
-            0x00098344, // FSCTL_DUPLICATE_EXTENTS_TO_FILE
-            &data as *const _ as *const std::ffi::c_void,
+            HANDLE(dest_file.as_raw_handle() as _),
+            FSCTL_DUPLICATE_EXTENTS_TO_FILE,
+            Some(&data as *const _ as *const std::ffi::c_void),
             std::mem::size_of::<DUPLICATE_EXTENTS_DATA>() as u32,
-            std::ptr::null_mut(),
+            None,
             0,
-            &mut bytes_returned,
-            std::ptr::null_mut(),
+            Some(&mut bytes_returned),
+            None,
         )
-    };
-
-    success != 0
+        .is_ok()
+    }
 }
 
 #[allow(clippy::too_many_arguments, clippy::collapsible_if)]
@@ -273,73 +275,41 @@ where
                     .truncate(true)
                     .open(dest_path),
             ) {
-                unsafe {
-                    if try_block_clone(&src_std_file, &dest_std_file, file_len) {
-                        progress_callback(file_len);
+                if try_block_clone(&src_std_file, &dest_std_file, file_len) {
+                    progress_callback(file_len);
 
-                        let src_hash = match hash_algorithm {
-                            Some(hasher::HashAlgorithm::Blake3) => hasher::hash_file_async(
-                                src_path.to_string_lossy().to_string(),
-                                hasher::HashAlgorithm::Blake3,
-                            )
-                            .await
-                            .ok(),
-                            Some(hasher::HashAlgorithm::XxHash3) => hasher::hash_file_async(
-                                src_path.to_string_lossy().to_string(),
-                                hasher::HashAlgorithm::XxHash3,
-                            )
-                            .await
-                            .ok(),
-                            Some(hasher::HashAlgorithm::Md5) => hasher::hash_file_async(
-                                src_path.to_string_lossy().to_string(),
-                                hasher::HashAlgorithm::Md5,
-                            )
-                            .await
-                            .ok(),
-                            Some(hasher::HashAlgorithm::Sha256) => hasher::hash_file_async(
-                                src_path.to_string_lossy().to_string(),
-                                hasher::HashAlgorithm::Sha256,
-                            )
-                            .await
-                            .ok(),
-                            None => None,
-                        };
+                    let src_hash = match hash_algorithm {
+                        Some(algo) => {
+                            hasher::hash_file_async(src_path.to_string_lossy().to_string(), algo)
+                                .await
+                                .ok()
+                        }
+                        None => None,
+                    };
 
-                        let mut times = std::fs::FileTimes::new();
-                        let mut has_times = false;
-                        if let Ok(modified) = src_meta.modified() {
-                            times = times.set_modified(modified);
-                            has_times = true;
-                        }
-                        if let Ok(accessed) = src_meta.accessed() {
-                            times = times.set_accessed(accessed);
-                            has_times = true;
-                        }
-                        if let Ok(created) = src_meta.created() {
-                            use std::os::windows::fs::FileTimesExt;
-                            times = times.set_created(created);
-                            has_times = true;
-                        }
-                        if has_times {
-                            let _ = dest_std_file.set_times(times);
-                        }
-
-                        let attrs = std::os::windows::fs::MetadataExt::file_attributes(&src_meta);
-                        let wide_path: Vec<u16> = dest_path
-                            .to_string_lossy()
-                            .encode_utf16()
-                            .chain(std::iter::once(0))
-                            .collect();
-                        unsafe extern "system" {
-                            fn SetFileAttributesW(
-                                lpfilename: *const u16,
-                                dwfileattributes: u32,
-                            ) -> i32;
-                        }
-                        SetFileAttributesW(wide_path.as_ptr(), attrs);
-
-                        return Ok((file_len, src_hash));
+                    let mut times = std::fs::FileTimes::new();
+                    let mut has_times = false;
+                    if let Ok(modified) = src_meta.modified() {
+                        times = times.set_modified(modified);
+                        has_times = true;
                     }
+                    if let Ok(accessed) = src_meta.accessed() {
+                        times = times.set_accessed(accessed);
+                        has_times = true;
+                    }
+                    if let Ok(created) = src_meta.created() {
+                        use std::os::windows::fs::FileTimesExt;
+                        times = times.set_created(created);
+                        has_times = true;
+                    }
+                    if has_times {
+                        let _ = dest_std_file.set_times(times);
+                    }
+
+                    let attrs = std::os::windows::fs::MetadataExt::file_attributes(&src_meta);
+                    set_win32_attributes(dest_path, attrs);
+
+                    return Ok((file_len, src_hash));
                 }
             }
         }
@@ -548,17 +518,7 @@ where
     {
         if let Ok(meta) = std::fs::metadata(src_path) {
             let attrs = std::os::windows::fs::MetadataExt::file_attributes(&meta);
-            let wide_path: Vec<u16> = dest_path
-                .to_string_lossy()
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect();
-            unsafe extern "system" {
-                fn SetFileAttributesW(lpfilename: *const u16, dwfileattributes: u32) -> i32;
-            }
-            unsafe {
-                SetFileAttributesW(wide_path.as_ptr(), attrs);
-            }
+            set_win32_attributes(dest_path, attrs);
         }
     }
 
@@ -584,8 +544,8 @@ mod tests {
     #[tokio::test]
     async fn test_copy_file_chunked_success() {
         let temp_dir = std::env::temp_dir();
-        let src_path = temp_dir.join(format!("copytej_src_{}.txt", uuid::Uuid::new_v4()));
-        let dest_path = temp_dir.join(format!("copytej_dest_{}.txt", uuid::Uuid::new_v4()));
+        let src_path = temp_dir.join(format!("copytej_src_{}.txt", uuid::Uuid::now_v7()));
+        let dest_path = temp_dir.join(format!("copytej_dest_{}.txt", uuid::Uuid::now_v7()));
 
         {
             let mut file = std::fs::File::create(&src_path).unwrap();

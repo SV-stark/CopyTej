@@ -151,7 +151,7 @@ impl QueueManager {
         dest_dir: String,
         is_move: bool,
     ) -> Result<Uuid, String> {
-        let job_id = Uuid::new_v4();
+        let job_id = Uuid::now_v7();
 
         // Check if sources exist
         let mut files = Vec::new();
@@ -169,9 +169,9 @@ impl QueueManager {
             let mut renamed = false;
             if is_move {
                 let p1_abs =
-                    std::fs::canonicalize(src_path).unwrap_or_else(|_| src_path.to_path_buf());
+                    dunce::canonicalize(src_path).unwrap_or_else(|_| src_path.to_path_buf());
                 let dest_path_parent = Path::new(&dest_dir);
-                let p2_abs = std::fs::canonicalize(dest_path_parent)
+                let p2_abs = dunce::canonicalize(dest_path_parent)
                     .unwrap_or_else(|_| dest_path_parent.to_path_buf());
                 let p1_root = p1_abs.components().next();
                 let p2_root = p2_abs.components().next();
@@ -223,8 +223,8 @@ impl QueueManager {
                 let dirname = src_path.file_name().unwrap().to_string_lossy().to_string();
                 let root_dest = Path::new(&dest_dir).join(dirname);
 
-                for entry in walkdir::WalkDir::new(src_path) {
-                    let entry = entry.map_err(|e| format!("Walkdir error: {}", e))?;
+                for entry in jwalk::WalkDir::new(src_path) {
+                    let entry = entry.map_err(|e| format!("jwalk error: {}", e))?;
                     let path = entry.path();
                     let relative_path = path.strip_prefix(src_path).unwrap();
                     let dest_path = root_dest.join(relative_path);
@@ -255,6 +255,26 @@ impl QueueManager {
                             error: None,
                         });
                     }
+                }
+            }
+        }
+
+        // Verify available disk space on destination volume using sysinfo
+        if let Ok(dest_canonical) = dunce::canonicalize(&dest_dir)
+            .or_else(|_| Ok::<_, std::io::Error>(Path::new(&dest_dir).to_path_buf()))
+        {
+            let disks = sysinfo::Disks::new_with_refreshed_list();
+            if let Some(disk) = disks
+                .iter()
+                .find(|d| dest_canonical.starts_with(d.mount_point()))
+            {
+                if disk.available_space() < bytes_total {
+                    tracing::warn!(
+                        "Low disk space warning for {}: required {}, available {}",
+                        disk.mount_point().to_string_lossy(),
+                        bytes_total,
+                        disk.available_space()
+                    );
                 }
             }
         }
@@ -901,6 +921,20 @@ impl QueueManager {
             "transfer://job-progress",
             (job.id.to_string(), overall_bytes_done, 0u64),
         );
+
+        // Send OS notification via tauri-plugin-notification
+        use tauri_plugin_notification::NotificationExt;
+        let op_name = if job.is_move { "Move" } else { "Copy" };
+        let _ = app_handle
+            .notification()
+            .builder()
+            .title(format!("CopyTej {} Completed", op_name))
+            .body(format!(
+                "Finished transferring {} items to {}",
+                job.src_paths.len(),
+                job.dest_dir
+            ))
+            .show();
 
         Ok(())
     }

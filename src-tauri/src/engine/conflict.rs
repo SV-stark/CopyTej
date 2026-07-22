@@ -75,7 +75,7 @@ impl ConflictManager {
             return Ok(res);
         }
 
-        let conflict_id = Uuid::new_v4().to_string();
+        let conflict_id = Uuid::now_v7().to_string();
         let (tx, rx) = oneshot::channel();
 
         {

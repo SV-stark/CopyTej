@@ -9,6 +9,7 @@
 
 pub mod commands;
 pub mod engine;
+pub mod errors;
 pub mod ipc;
 pub mod store;
 
@@ -84,6 +85,9 @@ fn parse_cli_args() -> Option<CliArgs> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = tracing_subscriber::fmt::try_init();
+    tracing::info!("Starting CopyTej application engine...");
+
     let cli_args = parse_cli_args();
 
     #[cfg(windows)]
